@@ -1,0 +1,6 @@
+(define (problem delivery-1x3-1) 
+    (:domain delivery) 
+    (:objects c_0_0 c_0_1 c_0_2 p1 t1) 
+    (:init (cell_t c_0_0) (cell_t c_0_1) (cell_t c_0_2) (package_t p1) (truck_t t1) (adjacent c_0_2 c_0_1) (adjacent c_0_1 c_0_2) (adjacent c_0_1 c_0_0) (adjacent c_0_0 c_0_1) (at p1 c_0_1) (at t1 c_0_0) (empty t1) ) 
+    (:goal (at p1 c_0_1) ) 
+)
