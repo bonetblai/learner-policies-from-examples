@@ -1,0 +1,220 @@
+import logging
+from typing import List, Tuple, Dict, Union, Any
+from pathlib import Path
+from collections import defaultdict
+
+import pymimir as mm
+import dlplan.core as dlplan_core
+import dlplan.state_space as dlplan_statespace
+
+from .instance_data import InstanceData
+from .domain_data import DomainData
+from .domain_data_utils import compute_domain_data
+
+from ..util import change_dir, write_file
+
+
+def create_vocabulary_info(domain: mm.Domain) -> dlplan_core.VocabularyInfo:
+    vocabulary_info = dlplan_core.VocabularyInfo()
+    for predicate in domain.get_static_predicates():
+        if predicate.get_name() != "=":
+            vocabulary_info.add_predicate(predicate.get_name(), len(predicate.get_parameters()), True)
+            vocabulary_info.add_predicate(predicate.get_name() + "_g", len(predicate.get_parameters()), True)
+    for predicate in domain.get_fluent_predicates():
+        vocabulary_info.add_predicate(predicate.get_name(), len(predicate.get_parameters()), False)
+        vocabulary_info.add_predicate(predicate.get_name() + "_g", len(predicate.get_parameters()), False)
+    for predicate in domain.get_derived_predicates():
+        vocabulary_info.add_predicate(predicate.get_name(), len(predicate.get_parameters()), False)
+        vocabulary_info.add_predicate(predicate.get_name() + "_g", len(predicate.get_parameters()), False)
+    for obj in domain.get_constants():
+        vocabulary_info.add_constant(obj.get_name())
+    return vocabulary_info
+
+
+def create_instance_info(
+        vocabulary_info: dlplan_core.VocabularyInfo,
+        instance_id: int,
+        mimir_state_space: mm.StateSpace
+) -> Tuple[dlplan_core.InstanceInfo, Dict[Union[mm.FluentGroundAtom, mm.DerivedGroundAtom], dlplan_core.Atom]]:
+    instance_info = dlplan_core.InstanceInfo(instance_id, vocabulary_info)
+    pddl_factories = mimir_state_space.get_aag().get_pddl_factories()
+    problem = mimir_state_space.get_aag().get_problem()
+    # Static initial literals
+    for literal in problem.get_static_initial_literals():
+        if literal.get_atom().get_predicate().get_name() != "=":
+            assert not literal.is_negated()
+            instance_info.add_static_atom(literal.get_atom().get_predicate().get_name(), [obj.get_name() for obj in literal.get_atom().get_objects()])
+    # Reached atoms
+    fluent_atom_id_to_dlplan_atom = dict()
+    derived_atom_id_to_dlplan_atom = dict()
+    for atom in pddl_factories.get_fluent_ground_atoms_from_indices(mimir_state_space.get_ssg().get_reached_fluent_ground_atoms()):
+        fluent_atom_id_to_dlplan_atom[atom.get_index()] = instance_info.add_atom(atom.get_predicate().get_name(), [obj.get_name() for obj in atom.get_objects()])
+    for atom in pddl_factories.get_derived_ground_atoms_from_indices(mimir_state_space.get_ssg().get_reached_derived_ground_atoms()):
+        derived_atom_id_to_dlplan_atom[atom.get_index()] = instance_info.add_atom(atom.get_predicate().get_name(), [obj.get_name() for obj in atom.get_objects()])
+    # Goal literals
+    for literal in problem.get_static_goal_condition():
+        assert not literal.is_negated()
+        instance_info.add_static_atom(literal.get_atom().get_predicate().get_name() + "_g", [obj.get_name() for obj in literal.get_atom().get_objects()])
+    for literal in problem.get_fluent_goal_condition():
+        assert not literal.is_negated()
+        instance_info.add_static_atom(literal.get_atom().get_predicate().get_name() + "_g", [obj.get_name() for obj in literal.get_atom().get_objects()])
+    for literal in problem.get_derived_goal_condition():
+        assert not literal.is_negated()
+        instance_info.add_static_atom(literal.get_atom().get_predicate().get_name() + "_g", [obj.get_name() for obj in literal.get_atom().get_objects()])
+    return instance_info, fluent_atom_id_to_dlplan_atom, derived_atom_id_to_dlplan_atom
+
+
+def create_dlplan_state(instance_info: dlplan_core.InstanceInfo,
+                        fluent_atom_id_to_dlplan_atom: Dict[int, dlplan_core.Atom],
+                        derived_atom_id_to_dlplan_atom: Dict[int, dlplan_core.Atom],
+                        ss_state_idx: int,
+                        ss_state: Any) -> dlplan_core.State:
+    dlplan_state_atoms = []
+    for atom_id in ss_state.get_state().get_fluent_atoms():
+        dlplan_state_atoms.append(fluent_atom_id_to_dlplan_atom[atom_id])
+    for atom_id in ss_state.get_state().get_derived_atoms():
+         dlplan_state_atoms.append(derived_atom_id_to_dlplan_atom[atom_id])
+    dlplan_state: dlplan_core.State = dlplan_core.State(ss_state_idx, instance_info, dlplan_state_atoms)
+    return dlplan_state
+
+
+def create_dlplan_statespace(
+        instance_info: dlplan_core.InstanceInfo,
+        mimir_state_space: mm.StateSpace,
+        fluent_atom_id_to_dlplan_atom: Dict[int, dlplan_core.Atom],
+        derived_atom_id_to_dlplan_atom: Dict[int, dlplan_core.Atom]
+) -> dlplan_statespace.StateSpace:
+    dlplan_states: Dict[int, dlplan_core.State] = dict()
+    forward_successors = defaultdict(set)
+    mimir_ss_states = mimir_state_space.get_states()
+    for ss_state_idx, ss_state in enumerate(mimir_ss_states):
+        dlplan_states[ss_state_idx] = create_dlplan_state(instance_info,
+                                                          fluent_atom_id_to_dlplan_atom, 
+                                                          derived_atom_id_to_dlplan_atom,
+                                                          ss_state_idx,
+                                                          ss_state)
+        """
+        dlplan_state_atoms = []
+        for atom_id in ss_state.get_state().get_fluent_atoms():
+            dlplan_state_atoms.append(fluent_atom_id_to_dlplan_atom[atom_id])
+        for atom_id in ss_state.get_state().get_derived_atoms():
+            dlplan_state_atoms.append(derived_atom_id_to_dlplan_atom[atom_id])
+        dlplan_states[ss_state_idx] = dlplan_core.State(ss_state_idx, instance_info, dlplan_state_atoms)
+        """
+        for ss_state_prime_idx in mimir_state_space.get_forward_adjacent_state_indices(ss_state_idx):
+            forward_successors[ss_state_idx].add(ss_state_prime_idx)
+    dlplan_state_space = dlplan_statespace.StateSpace(instance_info, dlplan_states, mimir_state_space.get_initial_state(), forward_successors, mimir_state_space.get_goal_states())
+    return dlplan_state_space
+
+
+def compute_instance_datas(domain_filepath: Path,
+                           instance_filepaths: List[Path],
+                           disable_closed_Q: bool,
+                           max_num_states_per_instance: int,
+                           max_time_per_instance: int,
+                           enable_dump_files: bool,
+                           remove_if_init_is_goal: bool = False) -> Tuple[List[InstanceData], DomainData]:
+    instance_datas: List[InstanceData] = []
+
+    state_space_options = mm.StateSpacesOptions()
+    state_space_options.state_space_options.max_num_states = max_num_states_per_instance
+    state_space_options.state_space_options.timeout_ms = max_time_per_instance
+    state_space_options.sort_ascending_by_num_states = True
+    state_spaces = mm.StateSpace.create(str(domain_filepath), [str(p) for p in instance_filepaths], state_space_options)
+
+    # Remove trivially solvable instances
+    filtered_instance_filepaths = []
+    num_ss_states = 0
+    for state_space in state_spaces:
+        filepath = Path(state_space.get_problem().get_filepath())
+        name = state_space.get_problem().get_name()
+        num_states = state_space.get_num_states()
+        num_goal_states = state_space.get_num_goal_states()
+        num_dead_end_states = state_space.get_num_deadend_states()
+        num_transitions = state_space.get_num_transitions()
+        max_goal_distance = state_space.get_max_goal_distance()
+        if num_states == num_goal_states:
+            logging.info(f"Removing {filepath} because all {num_states} state(s) are goal states")
+        elif remove_if_init_is_goal and state_space.is_goal_state(state_space.get_initial_state()):
+            logging.info(f"Removing {filepath} because initial state is goal state")
+        else:
+            filtered_instance_filepaths.append(filepath)
+            num_ss_states += num_states
+            logging.info(f"{filepath.name} ({name}): {num_states} state(s), {num_goal_states} goal state(s), {num_dead_end_states} dead-end state(s), {num_transitions} transition(s), max goal distance is {max_goal_distance}")
+    logging.info(f"{len(state_spaces)} instance(s), {len(filtered_instance_filepaths)} (non-removed) instances(s)")
+
+    with change_dir("state_spaces", enable=enable_dump_files):
+        # 1. Create mimir StateSpace and GlobalFaithfulAbstraction
+        logging.info("Constructing GlobalFaithfulAbstractions...")
+        abstractions_options = mm.FaithfulAbstractionsOptions()
+        abstractions_options.fa_options.max_num_concrete_states = max_num_states_per_instance
+        abstractions_options.fa_options.max_num_abstract_states = max_num_states_per_instance
+        abstractions_options.fa_options.timeout_ms = max_time_per_instance
+        abstractions_options.fa_options.compute_complete_abstraction_mapping = True
+        # Does not work yet
+        # abstractions_options.fa_options.pruning_strategy = mm.ObjectGraphPruningStrategyEnum.StaticScc
+        abstractions_options.sort_ascending_by_num_states = True
+        abstractions = mm.GlobalFaithfulAbstraction.create(str(domain_filepath), [str(p) for p in filtered_instance_filepaths], abstractions_options)
+        logging.info(f"{len(abstractions)} abstractions(s)")
+        if len(abstractions) == 0:
+            return [None] * 4
+
+        logging.info("Constructing StateSpaces...")
+        memories = []
+        for gfa in abstractions:
+            memories.append([gfa.get_problem(), gfa.get_pddl_factories(), gfa.get_aag(), gfa.get_ssg()])
+        # We must not sort state spaces to match the sorting of gfas
+        state_space_options = mm.StateSpacesOptions()
+        state_space_options.sort_ascending_by_num_states = False
+        state_spaces = mm.StateSpace.create(memories, state_space_options)
+
+        # 2. Create DomainData
+        vocabulary_info = create_vocabulary_info(state_spaces[0].get_aag().get_problem().get_domain())
+        domain_data = compute_domain_data(str(domain_filepath), vocabulary_info)
+
+        # 3. Create InstanceData
+        instance_idx = 0
+        assert len(state_spaces) == len(abstractions)
+        for mimir_ss, gfa in zip(state_spaces, abstractions):
+            # Ensure that unsolvable instances were removed
+            assert(mimir_ss.get_num_goal_states())
+
+            # 3.1. Create dlplan instance info
+            instance_info, fluent_atom_id_to_dlplan_atom, derived_atom_id_to_dlplan_atom = create_instance_info(vocabulary_info, instance_idx, mimir_ss)
+
+            # 3.2 Create dlplan state space
+            dlplan_ss = create_dlplan_statespace(instance_info, mimir_ss, fluent_atom_id_to_dlplan_atom, derived_atom_id_to_dlplan_atom)
+
+            # 3.3 Create mapping from concrete states to global faithful abstract states
+            ss_state_idx_to_gfa_state_idx = dict()
+            gfa_state_idx_to_ss_state_idx = dict()
+            for ss_state_idx, sp_state in enumerate(mimir_ss.get_states()):
+                gfa_state_idx = gfa.get_abstract_state_index(sp_state.get_state())
+                ss_state_idx_to_gfa_state_idx[ss_state_idx] = gfa_state_idx
+                gfa_state_idx_to_ss_state_idx[gfa_state_idx] = ss_state_idx
+
+            if enable_dump_files:
+                write_file(f"{instance_idx}.dot", dlplan_ss.to_dot(1))
+
+            if disable_closed_Q:
+                initial_gfa_state_idxs = [gfa.get_initial_state(),]
+                initial_mimir_ss_state_idxs = [mimir_ss.get_initial_state(),]
+            else:
+                initial_gfa_state_idxs = [state_idx for state_idx in range(gfa.get_num_states()) if gfa.is_alive_state(state_idx)]
+                initial_mimir_ss_state_idxs = [mimir_ss_state_idx for mimir_ss_state_idx in range(mimir_ss.get_num_states()) if mimir_ss.is_alive_state(mimir_ss_state_idx)]
+
+            logging.info(f"Created InstanceData with num concrete states: {mimir_ss.get_num_states()}, num abstract states: {gfa.get_num_states()}, and num initial states: {len(initial_gfa_state_idxs)}")
+            instance_data = InstanceData(instance_idx, dlplan_core.DenotationsCaches(), mimir_ss.get_problem().get_filepath(), gfa, mimir_ss, dlplan_ss, ss_state_idx_to_gfa_state_idx, gfa_state_idx_to_ss_state_idx, initial_gfa_state_idxs, initial_mimir_ss_state_idxs)
+            instance_datas.append(instance_data)
+            instance_idx += 1
+
+    gfa_state_global_indices =  set()
+    for instance_data in instance_datas:
+        for gfa_state in instance_data.gfa.get_states():
+            gfa_state_global_indices.add(gfa_state.get_global_index())
+    num_gfa_states = len(gfa_state_global_indices)
+
+    for instance_idx, instance_data in enumerate(instance_datas):
+        assert instance_idx == instance_data.idx
+
+    return domain_data, instance_datas, num_ss_states, num_gfa_states
