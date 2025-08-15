@@ -1,0 +1,129 @@
+{
+    # Standard benchmark
+    "args1": {"args": ["--width 0", "--encoding_type", "termination", "--solver_prefix termination9", "--disable_state_space_expansion",
+                       "--store_features", "--complexity_limit 15", "--max_feature_depth 5",
+                       "--no-deadends", "--planner", "siw+bfws", "--instance_selection forward", "--simplify_policy"]},
+
+    "3puzzle": {"domain": "learning/benchmarks/tractable/3puzzle", "xrefs": ["args1"]},
+    "8puzzle": {"domain": "learning/benchmarks/tractable/8puzzle", "xrefs": ["args1"]},
+    "8puzzle-1tile": {"domain": "learning/benchmarks/tractable/8puzzle-1tile", "xrefs": ["args1"], "args": ["--complexity_limit 20", "--instance_selection forward+"]},
+    "8puzzle-1tile-fixed": {"domain": "learning/benchmarks/tractable/8puzzle-1tile-fixed", "xrefs": ["args1"], "args": ["--complexity_limit 20", "--instance_selection forward+"]},
+    "8puzzle-2tiles": {"domain": "learning/benchmarks/tractable/8puzzle-2tiles", "xrefs": ["args1"], "args": ["--deadends"]},
+    "8puzzle-group": {"group": ["3puzzle", "8puzzle", "8puzzle-1tile", "8puzzle-1tile-fixed", "8puzzle-2tiles"]},
+
+    "barman-1cocktail": {"domain": "learning/benchmarks/tractable/barman-1cocktail", "xrefs": ["args1"], "args": ["--planner bfws", "--deadends", "--all_repositories"]},
+    "barman-1cocktail-1shot": {"domain": "learning/benchmarks/tractable/barman-1cocktail-1shot", "xrefs": ["args1"], "args": ["--planner bfws", "--deadends", "--all_repositories"]},
+    "barman-group": {"group": ["barman-1cocktail", "barman-1cocktail-1shot"]},
+
+    "blocks_3": {"domain": "learning/benchmarks/tractable/blocks_3", "xrefs": ["args1"], "args": ["--randomized_sketch_test 2", "--instance_selection forward+"]},
+    "blocks_3-v2": {"domain": "learning/benchmarks/tractable/blocks_3-v2", "xrefs": ["args1"], "args": ["--randomized_sketch_test 2", "--instance_selection forward+"]},
+    "blocks3-group": {"group": ["blocks_3", "blocks_3-v2"]},
+    "blocks_4_clear": {"domain": "learning/benchmarks/tractable/blocks_4_clear_no_constants", "xrefs": ["args1"]},
+    "blocks_4_on": {"domain": "learning/benchmarks/tractable/blocks_4_on_no_constants", "xrefs": ["args1"]},
+    "blocks_4": {"domain": "learning/benchmarks/tractable/blocks_4", "xrefs": ["args1"], "args": ["--instance_selection forward+"]},
+    "blocks_4-v2": {"domain": "learning/benchmarks/tractable/blocks_4-v2", "xrefs": ["args1"], "args": ["--instance_selection forward+"]},
+    "blocks4-group": {"group": ["blocks_4_clear", "blocks_4_on", "blocks_4", "blocks_4-v2"]},
+    "blocks-group": {"group": ["blocks3-group", "blocks4-group"], "time": "16:00:00"},
+
+    "childsnack": {"domain": "learning/benchmarks/tractable/childsnack", "xrefs": ["args1"]},
+    "childsnack_untyped": {"domain": "learning/benchmarks/tractable/childsnack_untyped", "xrefs": ["args1"]},
+    "childsnack-group": {"group": ["childsnack", "childsnack_untyped"]},
+
+    "delivery": {"domain": "learning/benchmarks/tractable/delivery", "xrefs": ["args1"]},
+    "delivery1": {"domain": "learning/benchmarks/tractable/delivery1", "xrefs": ["args1"]},
+    "delivery_untyped": {"domain": "learning/benchmarks/tractable/delivery_untyped", "xrefs": ["args1"]},
+    "delivery-group": {"group": ["delivery", "delivery1", "delivery_untyped"]},
+
+    "depot": {"domain": "learning/benchmarks/tractable/depot", "xrefs": ["args1"]},
+    "driverlog": {"domain": "learning/benchmarks/tractable/driverlog", "xrefs": ["args1"], "args": ["--deadends"]},
+    "ferry": {"domain": "learning/benchmarks/tractable/ferry", "xrefs": ["args1"]},
+    "freecell": {"domain": "learning/benchmarks/tractable/freecell", "xrefs": ["args1"], "args": ["--deadends"]},
+
+    "grid": {"domain": "learning/benchmarks/tractable/grid", "xrefs": ["args1"], "args": ["--deadends"]},
+    "grid-indexicals": {"domain": "learning/benchmarks/tractable/grid-indexicals", "xrefs": ["args1"], "args": ["--deadends"]},
+    "grid-indexicals-v2": {"domain": "learning/benchmarks/tractable/grid-indexicals-v2", "xrefs": ["args1"], "args": ["--deadends"]},
+    "grid-group": {"group": ["grid", "grid-indexicals", "grid-indexicals-v2"], "time": "16:00:00"},
+
+    "gripper": {"domain": "learning/benchmarks/tractable/gripper", "xrefs": ["args1"]},
+
+    "hiking": {"domain": "learning/benchmarks/tractable/hiking", "xrefs": ["args1"], "args": ["--deadends"]},
+    "hiking2": {"domain": "learning/benchmarks/tractable/hiking2", "xrefs": ["args1"], "args": ["--deadends"]},
+    "hiking3": {"domain": "learning/benchmarks/tractable/hiking3", "xrefs": ["args1"], "args": ["--deadends"]},
+    "hiking-group": {"group": ["hiking", "hiking2", "hiking3"]},
+
+    "logistics": {"domain": "learning/benchmarks/tractable/logistics", "xrefs": ["args1"]},
+    "logistics-1pkg": {"domain": "learning/benchmarks/tractable/logistics-1pkg", "xrefs": ["args1"]},
+    "logistics-1truck-indexicals": {"domain": "learning/benchmarks/tractable/logistics-1truck-indexicals", "xrefs": ["args1"], "args": ["--deadends"]},
+    "logistics-1truck": {"domain": "learning/benchmarks/tractable/logistics-1truck", "xrefs": ["args1"]},
+    "logistics-indexicals": {"domain": "learning/benchmarks/tractable/logistics-indexicals", "xrefs": ["args1"], "args": ["--deadends", "--instance_selection forward+"]},
+    "logistics2": {"domain": "learning/benchmarks/tractable/logistics2", "xrefs": ["args1"]},
+    "logistics2-1truck-indexicals": {"domain": "learning/benchmarks/tractable/logistics2-1truck-indexicals", "xrefs": ["args1"], "args": ["--deadends", "--instance_selection forward+"]},
+    "logistics2-1truck": {"domain": "learning/benchmarks/tractable/logistics2-1truck", "xrefs": ["args1"]},
+    "logistics2-indexicals": {"domain": "learning/benchmarks/tractable/logistics2-indexicals", "xrefs": ["args1"], "args": ["--deadends", "--all_repositories", "--instance_selection forward+", "--randomized_sketch_test 1"]},
+    "logistics-group": {"group": ["logistics", "logistics-1pkg", "logistics-1truck-indexicals", "logistics-1truck", "logistics-indexicals", "logistics2", "logistics2-1truck-indexicals", "logistics2-1truck", "logistics2-indexicals"], "time": "16:00:00"},
+    "logistics-group-20": {"group": ["logistics-group"], "args": ["--complexity_limit 20"]},
+
+    "miconic": {"domain": "learning/benchmarks/tractable/miconic", "xrefs": ["args1"]},
+    "reward": {"domain": "learning/benchmarks/tractable/reward", "xrefs": ["args1"]},
+    "rovers": {"domain": "learning/benchmarks/tractable/rovers", "xrefs": ["args1"]},
+    "satellite": {"domain": "learning/benchmarks/tractable/satellite", "xrefs": ["args1"], "args": ["--deadends"]},
+    "sokoban-1stone-v3-7x7": {"domain": "learning/benchmarks/tractable/sokoban-1stone-v3-7x7", "xrefs": ["args1"], "args": ["--deadends", "--instance_selection forward+"], "time": "16:00:00"},
+
+    "spanner": {"domain": "learning/benchmarks/tractable/spanner", "xrefs": ["args1"], "args": ["--planner bfws", "--deadends"]},
+    "spanner-1nut": {"domain": "learning/benchmarks/tractable/spanner-1nut", "xrefs": ["args1"], "args": ["--deadends"]},
+    "spanner-group": {"group": ["spanner", "spanner-1nut"]},
+
+    "tetris-opt14-strips-no-costs": {"domain": "learning/benchmarks/tractable/tetris-opt14-strips-no-costs", "xrefs": ["args1"], "args": ["--deadends"], "time": "12:00:00"},
+    "tidybot-opt11-strips": {"domain": "learning/benchmarks/tractable/tidybot-opt11-strips", "xrefs": ["args1"], "args": ["--deadends"]},
+    "tpp": {"domain": "learning/benchmarks/tractable/tpp", "xrefs": ["args1"]},
+
+    "visitall": {"domain": "learning/benchmarks/tractable/visitall", "xrefs": ["args1"]},
+    "visitall2": {"domain": "learning/benchmarks/tractable/visitall2", "xrefs": ["args1"]},
+    "visitall-group": {"group": ["visitall", "visitall2"]},
+
+    "zenotravel-1person": {"domain": "learning/benchmarks/tractable/zenotravel-1person", "xrefs": ["args1"], "args": ["--deadends", "--randomized_sketch_test 2", "--instance_selection forward+"]},
+    "zenotravel-1plane": {"domain": "learning/benchmarks/tractable/zenotravel-1plane", "xrefs": ["args1"], "args": ["--deadends", "--randomized_sketch_test 2", "--instance_selection forward+"]},
+    "zenotravel-1plane-1person": {"domain": "learning/benchmarks/tractable/zenotravel-1plane-1person", "xrefs": ["args1"], "args": ["--deadends", "--randomized_sketch_test 2", "--instance_selection forward+"]},
+    "zenotravel": {"domain": "learning/benchmarks/tractable/zenotravel", "xrefs": ["args1"], "args": ["--deadends", "--randomized_sketch_test 2", "--instance_selection forward+"]},
+    "zenotravel2": {"domain": "learning/benchmarks/tractable/zenotravel2", "xrefs": ["args1"], "args": ["--deadends", "--randomized_sketch_test 2", "--instance_selection forward+"]},
+    "zenotravel3": {"domain": "learning/benchmarks/tractable/zenotravel3", "xrefs": ["args1"], "args": ["--deadends", "--randomized_sketch_test 2", "--instance_selection forward+"]},
+    "zenotravel-group": {"group": ["zenotravel-1person", "zenotravel-1plane", "zenotravel-1plane-1person", "zenotravel", "zenotravel2", "zenotravel3"]},
+
+    "standard": {"group": ["8puzzle-group", "barman-group", "blocks-group", "childsnack-group", "delivery-group", "depot", "driverlog", "ferry", "freecell", "grid-group", "gripper", "hiking-group", "logistics-group", "logistics-group-20", "miconic", "reward", "rovers", "satellite", "sokoban-1stone-v3-7x7", "spanner-group", "tetris-opt14-strips-no-costs", "tidybot-opt11-strips", "tpp", "visitall-group", "zenotravel-group"]},
+    "standard-simplify-only-conditions": {"group": ["standard"], "args": ["--simplify_only_conditions"]},
+    "kr2025": {"group": ["standard", "standard-simplify-only-conditions"]},
+
+    # Indexicals V3
+    # Default arguments
+    "args2": {"args": ["--width 0", "--encoding_type termination", "--solver_prefix termination9", "--disable_state_space_expansion",
+                       "--store_features", "--complexity_limit 10", "--max_feature_depth 5",
+                       "--planner siw+bfws", "--instance_selection forward",
+                       "--deadends"]},
+
+    "blocks_3-indexicals-v3": {"domain": "learning/benchmarks/indexicals-v3/blocks_3-indexicals-v3", "xrefs": ["args2"]},
+    "blocks_3-v2-indexicals-v3": {"domain": "learning/benchmarks/indexicals-v3/blocks_3-v2-indexicals-v3", "xrefs": ["args2"]},
+    "blocks_4-indexicals-v3": {"domain": "learning/benchmarks/indexicals-v3/blocks_4-indexicals-v3", "xrefs": ["args2"]},
+    "blocks_4_clear-indexicals-v3-0": {"domain": "learning/benchmarks/indexicals-v3/blocks_4_clear_no_constants-indexicals-v3-0", "xrefs": ["args2"]},
+    "blocks_4_clear-indexicals-v3-1": {"domain": "learning/benchmarks/indexicals-v3/blocks_4_clear_no_constants-indexicals-v3-1", "xrefs": ["args2"]},
+    "blocks_4_on-indexicals-v3-0": {"domain": "learning/benchmarks/indexicals-v3/blocks_4_on_no_constants-indexicals-v3-0", "xrefs": ["args2"]},
+    "blocks_4_on-indexicals-v3-1": {"domain": "learning/benchmarks/indexicals-v3/blocks_4_on_no_constants-indexicals-v3-1", "xrefs": ["args2"]},
+    "blocks_4-v2-indexicals-v3": {"domain": "learning/benchmarks/indexicals-v3/blocks_4-v2-indexicals-v3", "xrefs": ["args2"]},
+    "blocks3-group-indexicals-v3": {"group": ["blocks_3-indexicals-v3", "blocks_3-v2-indexicals-v3"]},
+    "blocks4-group-indexicals-v3": {"group": ["blocks_4-indexicals-v3", "blocks_4_clear-indexicals-v3", "blocks_4_on-indexicals-v3", "blocks_4-v2-indexicals-v3"]},
+    "blocks-group-indexicals-v3": {"group": ["blocks3-group-indexicals-v3", "blocks4-group-indexicals-v3"]},
+
+    "gripper-indexicals-v3-0": {"domain": "learning/benchmarks/indexicals-v3/gripper-indexicals-v3-0", "xrefs": ["args2"]},
+
+    "indexicals-v3": {"group": ["blocks-group-indexicals-v3", "gripper-indexicals-v3"]},
+
+    # Contextual
+    # Default arguments
+    "args3": {"xrefs": ["args1"], "args": ["--monotone_only_by_dec", "--contextual"]},
+    "contextual": {"group": ["standard"], "xrefs": ["args3"]},
+    "g2": {"group": ["ferry"], "xrefs": ["args1"], "args": []},
+    "test": {"group": ["blocks-group"], "xrefs": ["args3"]},
+    "8puzzle-2tiles-contextual": {"group": ["8puzzle-2tiles"], "xrefs": ["args3"]},
+    "8puzzle-1tile-contextual": {"group": ["8puzzle-1tile"], "xrefs": ["args3"], "args": ["--complexity_limit 20"]},
+    "blocks_3-v2-contextual": {"group": ["blocks_3-v2"], "xrefs": ["args3"]},
+    "logistics-indexicals-contextual": {"group": ["logistics-indexicals"], "xrefs": ["args3"]},
+}
