@@ -1,0 +1,10 @@
+(define (problem blocksworld-81)
+    (:domain blocksworld)
+    (:objects b1 - object)
+    (:init
+        (markable-0 b1)
+        (clear b1)
+        (on-table b1)
+    )
+    (:goal (and (clear b1) (on-table b1)))
+)

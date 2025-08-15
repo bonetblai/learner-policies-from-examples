@@ -1,0 +1,13 @@
+(define (problem BW-rand-2)
+    (:domain blocksworld)
+    (:objects b1 b2)
+    (:init
+        (markable-0 b1)
+        (markable-0 b2)
+        (arm-empty)
+        (on b1 b2)
+        (on-table b2)
+        (clear b1)
+    )
+    (:goal (and (clear b1)))
+)
