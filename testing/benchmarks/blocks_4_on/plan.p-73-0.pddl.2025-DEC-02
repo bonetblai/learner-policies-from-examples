@@ -1,0 +1,6 @@
+(unstack b56 b33)
+(putdown b56)
+(unstack b33 b2)
+(stack b33 b69)
+(unstack b1 b55)
+(stack b1 b2)

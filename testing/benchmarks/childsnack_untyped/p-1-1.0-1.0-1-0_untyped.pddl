@@ -1,0 +1,5 @@
+(define (problem prob-snack) 
+    (:domain child-snack) 
+    (:objects child1 bread1 content1 tray1 table3 table1 table2 sandw1) 
+    (:init (place_t kitchen) (child_t child1) (bread_portion_t bread1) (content_portion_t content1) (tray_t tray1) (place_t table3) (place_t table1) (place_t table2) (sandwich_t sandw1) (at tray1 kitchen) (at_kitchen_bread bread1) (at_kitchen_content content1) (no_gluten_bread bread1) (no_gluten_content content1) (allergic_gluten child1) (waiting child1 table2) (notexist sandw1) ) 
+    (:goal (and (served child1) ) ) )

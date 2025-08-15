@@ -1,0 +1,20 @@
+(define (domain simple-navigation)
+  (:requirements :strips)
+  (:predicates
+      (at ?pos)
+      (fuel ?level)
+      (next ?level1 ?level2)
+      (connected ?pos1 ?pos2)
+      (gas-station ?pos)
+  )
+  (:action refuel
+    :parameters (?level ?nlevel ?pos)
+    :precondition (and (fuel ?level) (at ?pos) (gas-station ?pos) (next ?level ?nlevel))
+    :effect (and (not (fuel ?level)) (fuel ?nlevel))
+  )
+  (:action move
+    :parameters (?pos ?npos ?level ?nlevel)
+    :precondition (and (at ?pos) (fuel ?level) (connected ?pos ?npos) (next ?nlevel ?level))
+    :effect (and (not (at ?pos)) (not (fuel ?level)) (at ?npos) (fuel ?nlevel))
+  )
+)

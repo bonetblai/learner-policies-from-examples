@@ -1,0 +1,7 @@
+(unstack b23 b41)
+(stack b23 b42)
+(unstack b41 b29)
+(stack b41 b23)
+(unstack b29 b16)
+(stack b29 b17)
+(unstack b16 b1)
