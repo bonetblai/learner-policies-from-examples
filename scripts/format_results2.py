@@ -40,7 +40,7 @@ def read_data(filepath: Path) -> Dict[str, Any]:
             call_line: str = parsed_line[parsed_line.find("python"):]
             data["call"] = call_line
 
-            planner: str = call_line[9 + call_line.find("--planner"):]
+            planner: str = call_line[9 + call_line.rfind("--planner"):]
             planner: str = planner[: planner.find("--")].strip(" ")
             data["planner"] = planner
 
@@ -270,13 +270,11 @@ if __name__ == "__main__":
 
     # Domain translations
     translation: Dict[str, str] = {
-        "8puzzle-1tile": "8puzzle-1tile-fixed",
-        "8puzzle-1tile-v2": "8puzzle-1tile",
         "barman-1cocktail": "Barman-1cocktail",
         "barman-1cocktail-1shot": "Barman-1cocktail-1shot",
         "blocks_3": "Blocks3ops",
-        "blocks_3_v2": "Blocks3ops",
-        "blocks_4_v2": "Blocks4ops",
+        "blocks_3-v2": "Blocks3ops",
+        "blocks_4-v2": "Blocks4ops",
         "blocks_4_clear_no_constants": "Blocks4ops-clear",
         "blocks_4_on_no_constants": "Blocks4ops-on",
         "childsnack": "Childsnack",
@@ -293,7 +291,7 @@ if __name__ == "__main__":
         "logistics-1pkg": "Logistics-1pkg",
         "logistics-1truck": "Logistics-1truck",
         "logistics-1truck-indexicals": "Logistics-1truck-idx",
-        "logistics2-indexicals": "Logistics-indexicals",
+        "logistics2-indexicals": "Logistics2-indexicals",
         "reward": "Reward",
         "rovers": "Rovers",
         "satellite": "Satellite",
@@ -343,6 +341,9 @@ if __name__ == "__main__":
             num_successes += 1
             domain = data["domain"]
             domain += "-1nut" if domain == "spanner" and data["planner"] == "siw+bfws" else ""
+            domain = domain if args.no_translation else translation.get(domain, domain)
+            if "--simplify_only_conditions" in data["call"]:
+                domain += "*"
             size_Q = data["stats"]["learning"]["instances"]
             size_S = data.get("vertices", -1)
             size_F = data["stats"]["learning"]["features"]
@@ -365,7 +366,7 @@ if __name__ == "__main__":
             alg = data["stats"]["time"]["pricing/algorithm"]
             ver = data["stats"]["time"]["verification"]
             total = data["stats"]["time"]["total"]
-            domain_str = f"\\Verb!{domain if args.no_translation else translation.get(domain, domain)}!"
+            domain_str = f"\\Verb!{domain}!"
             print(f"{domain_str:40} & {size_Q:6,} & {size_S:6,} & {size_F:8,} & {strategy:5} & {outer:6} & {inner_global:6,} & {size_Qp:7} & {inner:6} & {good:8} & {bad:8} & {size_H:5,} & {size_G:6} & {size_pi:7} & {prep:10,.2f} & {alg:10,.2f} & {ver:10,.2f} & {total:10,.2f} \\\\")
 
     # Report failures
@@ -403,6 +404,9 @@ if __name__ == "__main__":
                 num_failures += 1
                 domain = data["domain"]
                 domain += "-1nut" if domain == "spanner" and data["planner"] == "siw+bfws" else ""
+                domain = domain if args.no_translation else translation.get(domain, domain)
+                if "--simplify_only_conditions" in data["call"]:
+                    domain += "*"
                 size_Q = -1 if data["instances"] == 0 else data["instances"]
                 size_S = data.get("vertices", -1)
                 size_F = data.get("features", dict()).get("numerical_features", 0) + data.get("features", dict()).get("boolean_features", 0)
@@ -426,7 +430,7 @@ if __name__ == "__main__":
                 alg = data["stats"]["time"].get("pricing/algorithm", -1)
                 ver = data["stats"]["time"].get("verification", -1)
                 total = data["stats"]["time"].get("total", -1)
-                domain_str = f"\\Verb!{domain if args.no_translation else translation.get(domain, domain)}!"
+                domain_str = f"\\Verb!{domain}!"
                 if reason != "UNEXPLAINED":
                     print(f"{domain_str:40} & {size_Q:6,} & {size_S:6,} & {size_F:8,} & {strategy:5} & {outer:6} & {inner_global:6,} & {size_Qp:7} & {inner:6} & {good:8} & {bad:8} & {size_H:5,} & {reason:>16} & {prep:10,.2f} & {alg:10,.2f} & {ver:10,.2f} & {total:10,.2f} \\\\")
             except:

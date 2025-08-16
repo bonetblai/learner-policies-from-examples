@@ -153,7 +153,7 @@ class GreedySolver:
                     feature_chains[f_idx_index] = new_f_idx_chain
                     q.append(f_idx)
 
-    def _score_fn(self, f_idx: int, pending_requirements: intbitset, feature_costs: List[int], feature_chains: List[Tuple[int]]) -> int:
+    def _score_fn(self, f_idx: int, pending_requirements: intbitset, feature_costs: List[int], feature_chains: List[Tuple[int]]) -> float:
         feature_index: int = self._f_idx_to_feature_index[f_idx]
         feature_complexity: int = self._relevant_features[feature_index][1].complexity
         feature_cost = feature_costs[feature_index]
@@ -288,9 +288,9 @@ class GreedySolver:
             return None, incumbent_cost
 
         eligible_features: List[int] = list(self._m_pairs.f_idxs_for_g_idxs(incumbent_terminating_set))
-        eligible_features_with_scores: List[Tuple[int, int]] = [(f_idx, self._simple_score_fn(f_idx, pending_requirements)) for f_idx in eligible_features]
-        eligible_features_with_non_zero_scores: List[Tuple[int, int]] = [(f_idx, score) for f_idx, score in eligible_features_with_scores if score > 0]
-        sorted_eligible_features_with_scores: List[Tuple[int, int]] = sorted(eligible_features_with_non_zero_scores, key=lambda item: item[1], reverse=True)
+        eligible_features_with_scores: List[Tuple[int, float]] = [(f_idx, self._simple_score_fn(f_idx, pending_requirements)) for f_idx in eligible_features]
+        eligible_features_with_non_zero_scores: List[Tuple[int, float]] = [(f_idx, score) for f_idx, score in eligible_features_with_scores if score > 0]
+        sorted_eligible_features_with_scores: List[Tuple[int, float]] = sorted(eligible_features_with_non_zero_scores, key=lambda item: item[1], reverse=True)
 
         for f_idx, score in sorted_eligible_features_with_scores:
             feature_index: int = self._f_idx_to_feature_index[f_idx]
@@ -365,9 +365,9 @@ class GreedySolver:
             eligible_features: List[int] = [f_idx for f_idx, _ in self._relevant_features if feature_costs[self._f_idx_to_feature_index[f_idx]] > 0]
 
             # Sort eligible features by score
-            eligible_features_with_scores: List[Tuple[int, int]] = [(f_idx, self._score_fn(f_idx, pending_requirements, feature_costs, feature_chains)) for f_idx in eligible_features]
-            eligible_features_with_non_zero_score: List[Tuple[int, int]] = [(f_idx, score) for f_idx, score in eligible_features_with_scores if score > 0]
-            sorted_eligible_features_with_non_zero_score: List[Tuple[int, int]] = sorted(eligible_features_with_non_zero_score, key=lambda item: item[1], reverse=True)
+            eligible_features_with_scores: List[Tuple[int, float]] = [(f_idx, self._score_fn(f_idx, pending_requirements, feature_costs, feature_chains)) for f_idx in eligible_features]
+            eligible_features_with_non_zero_score: List[Tuple[int, float]] = [(f_idx, score) for f_idx, score in eligible_features_with_scores if score > 0]
+            sorted_eligible_features_with_non_zero_score: List[Tuple[int, float]] = sorted(eligible_features_with_non_zero_score, key=lambda item: item[1], reverse=True)
 
             # Check for early termination due to non-existence of solution
             if len(sorted_eligible_features_with_non_zero_score) == 0:
