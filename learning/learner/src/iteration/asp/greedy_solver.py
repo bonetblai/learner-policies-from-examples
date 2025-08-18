@@ -49,6 +49,7 @@ class GreedySolver:
 
         # Calculate numerical features
         self._numerical_features: List[Tuple[int, Feature]] = [(f_idx, feature) for f_idx, feature in self._relevant_features if isinstance(feature.dlplan_feature, dlplan_core.Numerical)]
+        self._numerical_f_idxs: intbitset = intbitset([f_idx for f_idx, _ in self._numerical_features])
 
         # Construct requirements, one per ex-edge and one per pair of goal and non-goal xstates
         self._annotated_requirements: List[Tuple[Dict[str, Any], intbitset]] = []
@@ -153,12 +154,14 @@ class GreedySolver:
                     feature_chains[f_idx_index] = new_f_idx_chain
                     q.append(f_idx)
 
-    def _score_fn(self, f_idx: int, pending_requirements: intbitset, feature_costs: List[int], feature_chains: List[Tuple[int]]) -> float:
+    def _score_fn(self, f_idx: int, pending_requirements: intbitset, feature_costs: List[int], feature_chains: List[Tuple[int]]) -> Tuple[float]:
         feature_index: int = self._f_idx_to_feature_index[f_idx]
+        feature_numerical: float = 1.0 if f_idx in self._numerical_f_idxs else 0.0
         feature_complexity: int = self._relevant_features[feature_index][1].complexity
         feature_cost = feature_costs[feature_index]
         feature_chain: intbitset = intbitset(feature_chains[feature_index])
-        return sum([1 if len(feature_chain & self._requirements[i]) > 0 else 0 for i in pending_requirements]) / feature_cost
+        score: float = sum([1 if len(feature_chain & self._requirements[i]) > 0 else 0 for i in pending_requirements]) / feature_cost
+        return (score, feature_numerical)
 
     def _simple_score_fn(self, f_idx: int, pending_requirements: intbitset) -> float:
         feature_index: int = self._f_idx_to_feature_index[f_idx]
@@ -207,7 +210,6 @@ class GreedySolver:
         logging.info(f"Calculate decorations: features={list(terminating_feature_set)}, ranks={feature_ranks}")
         unknowns: Dict[int, Dict[int, intbitset]] = defaultdict(lambda: defaultdict(intbitset))
         dont_cares: Dict[int, Dict[int, intbitset]] = defaultdict(lambda: defaultdict(intbitset))
-        numerical_f_idxs: intbitset = intbitset([f_idx for f_idx, _ in self._numerical_features])
 
         # Calculate f_idxs that separate ext_states from deadend paths as follows:
         # 1. Solve min-cost hitting set problem to choose f_idxs that solve all requirements for daadend-paths (called f_idxs_for_deadend_requirements)
@@ -257,12 +259,12 @@ class GreedySolver:
                 sorted_g_idxs: List[Tuple[int, int]] = sorted([(g_idx, feature_ranks.get(g_idx)) for g_idx in g_idxs], key=lambda item: item[1])
                 g_idx_for_ext_state: int = sorted_g_idxs[0][0]
                 non_dont_care_conditions.add(g_idx_for_ext_state)
-            if f_idx_for_ext_state not in numerical_f_idxs:
+            if f_idx_for_ext_state not in self._numerical_f_idxs:
                 non_dont_care_conditions.add(f_idx_for_ext_state)
 
             # Step 3: Add conditions for deadend requirements; i.e., add boolean marked f_idxs for ext_state
             marked_f_idxs_for_ext_state = marked_f_idxs.get(ex_ext_state, intbitset())
-            non_dont_care_conditions |= marked_f_idxs_for_ext_state - numerical_f_idxs
+            non_dont_care_conditions |= marked_f_idxs_for_ext_state - self._numerical_f_idxs
 
             unknown_effects: List[int] = [f_idx for f_idx in terminating_feature_set if feature_ranks.get(f_idx) > feature_ranks.get(f_idx_for_ext_state) and f_idx not in marked_f_idxs_for_ext_state]
             unknowns[instance_idx][state_idx] = intbitset(unknown_effects)
@@ -365,9 +367,9 @@ class GreedySolver:
             eligible_features: List[int] = [f_idx for f_idx, _ in self._relevant_features if feature_costs[self._f_idx_to_feature_index[f_idx]] > 0]
 
             # Sort eligible features by score
-            eligible_features_with_scores: List[Tuple[int, float]] = [(f_idx, self._score_fn(f_idx, pending_requirements, feature_costs, feature_chains)) for f_idx in eligible_features]
-            eligible_features_with_non_zero_score: List[Tuple[int, float]] = [(f_idx, score) for f_idx, score in eligible_features_with_scores if score > 0]
-            sorted_eligible_features_with_non_zero_score: List[Tuple[int, float]] = sorted(eligible_features_with_non_zero_score, key=lambda item: item[1], reverse=True)
+            eligible_features_with_scores: List[Tuple[int, Tuple[float]]] = [(f_idx, self._score_fn(f_idx, pending_requirements, feature_costs, feature_chains)) for f_idx in eligible_features]
+            eligible_features_with_non_zero_score: List[Tuple[int, Tuple[float]]] = [(f_idx, score) for f_idx, score in eligible_features_with_scores if score[0] > 0]
+            sorted_eligible_features_with_non_zero_score: List[Tuple[int, Tuple[float]]] = sorted(eligible_features_with_non_zero_score, key=lambda item: item[1], reverse=True)
 
             # Check for early termination due to non-existence of solution
             if len(sorted_eligible_features_with_non_zero_score) == 0:
@@ -416,7 +418,8 @@ class GreedySolver:
             best_eligible_feature: int = random.choice(best_eligible_features)
             best_cost: int = feature_costs[self._f_idx_to_feature_index[best_eligible_feature]]
             best_chain: Tuple[int] = feature_chains[self._f_idx_to_feature_index[best_eligible_feature]]
-            logging.info(f"#eligible={len(eligible_features)}, #best={len(best_eligible_features)}, score={self._score_fn(best_eligible_feature, pending_requirements, feature_costs, feature_chains):0.2f}, f_idx={best_eligible_feature}.{self._relevant_features[self._f_idx_to_feature_index[best_eligible_feature]][1]._dlplan_feature}, chain={best_chain}, cost={best_cost}")
+            best_score: Tuple[float] = self._score_fn(best_eligible_feature, pending_requirements, feature_costs, feature_chains)
+            logging.info(f"#eligible={len(eligible_features)}, #best={len(best_eligible_features)}, score=({best_score[0]:0.2f},{int(best_score[1])}), f_idx={best_eligible_feature}.{self._relevant_features[self._f_idx_to_feature_index[best_eligible_feature]][1]._dlplan_feature}, chain={best_chain}, cost={best_cost}")
 
             # Extend sigma
             sigma: Set[Tuple[int, int]] = sigma | set(zip(best_chain, (None,) + best_chain[:-1]))
