@@ -12,15 +12,67 @@ def submit_job(jdesc: Dict[str, Any], suffix: str, arguments: Any) -> Tuple[str]
     job_domain: str = jdesc.get("domain")
     job_args: List[str] = jdesc.get("args", []) + jdesc.get("extra", [])
     job_time: str = arguments.time or jdesc.get("time") or "8:00:00"
+    job_mem: str = arguments.mem or jdesc.get("mem") or "64g"
     assert job_name is not None and job_domain is not None
 
-    args: List[str] = ["sbatch", "--partition", arguments.partition, "--time", job_time, "scripts/submit/job.slurm", job_domain, suffix] + job_args
-    logging.debug(f"Submit: name=|{job_name}|, partition=|{arguments.partition}|, domain=|{job_domain}|, suffix=|{suffix}|, args=|{args}|")
+    #args: List[str] = ["sbatch", "--partition", arguments.partition, "--time", job_time, "scripts/submit/job.slurm", job_domain, suffix] + job_args
+    #with Popen(args, stdout=PIPE) as proc:
+    #    output = proc.stdout.read().decode("utf-8").strip("\n")
 
-    with Popen(args, stdout=PIPE) as proc:
-        output = proc.stdout.read().decode("utf-8").strip("\n")
+    slurm_script: List[str] = [
+        '#!/bin/bash',
+        f'#SBATCH --job-name={job_name}',
+        '#SBATCH --cpus-per-task=1',
+        '#SBATCH --nodes=1',
+        f'#SBATCH --time={job_time}',
+        f'#SBATCH --mem={job_mem}',
+        f'#SBATCH --partition={arguments.partition}',
+        '#SBATCH --output=slurm/logs/default/slurm.output.%A',
+        '#SBATCH --error=slurm/logs/default/slurm.error.%A',
+        # Print ulimits
+        'ulimit -a',
+        # Define variables for input arguments
+        f'DOMAIN={job_domain}',
+        'NAME=`basename $DOMAIN`',
+        f'SUFFIX={suffix}',
+        f'ARGS="{" ".join(job_args)}"',
+        # Define other variables
+        'REQUIRED_ARGS="--domain_filepath $DOMAIN/domain.pddl --problems_directory $DOMAIN/training/easy --workspace $DOMAIN/workspace"',
+        'PLANNER=`python scripts/submit/parse_option.py --planner "$ARGS"`',
+        'STRATEGY=`python scripts/submit/parse_option.py --instance_selection "$ARGS"`',
+        '',
+        'DATEFMT=`date +"%F"`',
+        'if [ "$SUFFIX" == "<hour>" ]; then',
+        '    DATEFMT+=`date +".%Hh"`',
+        'else',
+        '    DATEFMT+=$SUFFIX',
+        'fi',
+        'LOG_FOLDER=slurm/logs/${DATEFMT}/${PLANNER}.${STRATEGY}',
+        'mkdir -p ${LOG_FOLDER}',
+        '',
+        'LOGFILE_OUTPUT=${LOG_FOLDER}/${NAME}.output.${SLURM_JOB_ID}',
+        'SLURM_OUTPUT=slurm/logs/default/slurm.output.${SLURM_JOB_ID}',
+        'echo ln -f ${SLURM_OUTPUT} ${LOGFILE_OUTPUT}',
+        'ln -f ${SLURM_OUTPUT} ${LOGFILE_OUTPUT}',
+        '',
+        'LOGFILE_ERROR=${LOG_FOLDER}/${NAME}.error.${SLURM_JOB_ID}',
+        'SLURM_ERROR=slurm/logs/default/slurm.error.${SLURM_JOB_ID}',
+        'echo ln -f ${SLURM_ERROR} ${LOGFILE_ERROR}',
+        'ln -f ${SLURM_ERROR} ${LOGFILE_ERROR}',
+        # Execute
+        '. ~/.bashrc',
+        'conda activate sketches',
+        'python learning/main.py $REQUIRED_ARGS $ARGS',
+    ]
+    logging.debug(f"Submit: name=|{job_name}|, partition=|{arguments.partition}|, domain=|{job_domain}|, suffix=|{suffix}|, job_args=|{job_args}|")
 
-    logging.debug(f"Submit: output=|{output}|")
+    # Submit SLURM job
+    with Popen(["sbatch"], stdin=PIPE, stdout=PIPE, stderr=PIPE) as proc:
+        output, error = proc.communicate(input="\n".join(slurm_script).encode("utf-8"))
+    logging.debug(f"Submit: output=|{output}|, error=|{error}|")
+
+    output = output.decode("utf-8").strip("\n")
+    error = error.decode("utf-8").strip("\n")
     job_id: str = output.split(" ")[-1]
     logging.debug(f"Submit: {job_name} {job_id}")
     return job_name, job_id
@@ -49,6 +101,7 @@ if __name__ == "__main__":
     parser.add_argument("--dryrun", action='store_true', default=False, help="Whether to perfrom a dry run. Default is False.")
     parser.add_argument("--partition", type=str, default="rleap_cpu", help="Slurm partition. Default is 'rleap_cpu'.")
     parser.add_argument("--time", type=str, default=None, help="Override any time limit; format is Slurm's format. Default is None.")
+    parser.add_argument("--mem", type=str, default=None, help="Override any memory limit; format is Slurm's format. Default is None.")
     parser.add_argument("--suffix", type=str, default=None, help="Alternate suffix for log folder. Default is <jspec>.")
     parser.add_argument("jspec", type=str, nargs=1, help="Job spec to submit: either entry in database, PREFIX:<prefix>, or ALL.")
     parser.add_argument("extra_arguments", type=str, default=None, nargs="*", help="Extra (overriding) arguments for job. Default is None.")
@@ -100,6 +153,7 @@ if __name__ == "__main__":
             xrefs: List[str] = jdesc.get("xrefs", [])
             args: List[str] = jdesc.get("args", [])
             time: str = jdesc.get("time")
+            mem: str = jdesc.get("mem")
             if jname not in database:
                 logging.warning(f"Skipping job '{jname}' because it is not database.")
                 continue
@@ -107,15 +161,17 @@ if __name__ == "__main__":
                 xrefs: List[str] = list(database.get(jname).get("xrefs", [])) + xrefs
                 args: List[str] = list(database.get(jname).get("args", [])) + args
                 time: str = database.get(jname).get("time") or time
+                mem: str = database.get(jname).get("mem") or mem
                 for jspec in database.get(jname).get("group"):
-                    q.append({"name": jspec, "xrefs": xrefs, "args": args, "time": time})
+                    q.append({"name": jspec, "xrefs": xrefs, "args": args, "time": time, "mem": mem})
             else:
                 xrefs: List[str] = list(database.get(jname).get("xrefs", [])) + xrefs
                 args: List[str] = list(database.get(jname).get("args", [])) + args
                 time: str = database.get(jname).get("time") or time
+                mem: str = database.get(jname).get("mem") or mem
                 jdesc: Dict[str, Any] = {"name": jname}
                 jdesc.update(database.get(jname))
-                jdesc.update({"xrefs": xrefs, "args": args, "time": time})
+                jdesc.update({"xrefs": xrefs, "args": args, "time": time, "mem": mem})
                 jobs.append(jdesc)
 
     elif jspec == "ALL":
