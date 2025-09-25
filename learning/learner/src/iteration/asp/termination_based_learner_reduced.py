@@ -31,9 +31,13 @@ LIST_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
 from .m_pairs import MPairs
 from .m_pairs_contextual import MPairsContextual
+from .m_counters import MCounters
+from .watched_rules import WatchedRules
+
 from .greedy_solver import GreedySolver
 from .greedy_solver_contextual import GreedySolverContextual
 from .greedy_solver_contextual_alt import GreedySolverContextualAlt
+from .greedy_solver_by_rule_elimination import GreedySolverByRuleElimination
 
 
 class TerminationBasedLearnerReduced:
@@ -203,11 +207,14 @@ class TerminationBasedLearnerReduced:
         simplify_only_conditions: bool = kwargs.get("simplify_only_conditions", False)
         separate_siblings: bool = kwargs.get("separate_siblings", False)
         contextual: bool = kwargs.get("contextual", False)
+        rule_elimination: bool = kwargs.get("rule_elimination", False)
         monotone_only_by_dec: bool = kwargs.get("monotone_only_by_dec", False)
         uniform_costs: bool = kwargs.get("uniform_costs", False)
         verbose: bool = kwargs.get("verbose", False)
         dump_asp_program: bool = kwargs.get("dump_asp_program", False)
         previous_feature_rank: int = kwargs.get("previous_feature_rank")
+
+        assert not contextual or not rule_elimination
 
         # Print paths
         for instance_idx, path in self._iteration_paths_with_idxs:
@@ -223,7 +230,13 @@ class TerminationBasedLearnerReduced:
 
         # Preprocess termination
         self._timers.resume("preprocessing")
-        self._preprocessing_data: Dict[str, Any] = self._preprocess_termination(contextual, monotone_only_by_dec, separate_siblings)
+        preprocess_options: Dict[str, Any] = {
+            "monotone_only_by_dec": monotone_only_by_dec,
+            "separate_siblings": separate_siblings,
+            "contextual": contextual,
+            "rule_elimination": rule_elimination,
+        }
+        self._preprocessing_data: Dict[str, Any] = self._preprocess_termination(**preprocess_options)
         self._relevant_features: List[Tuple[int, Feature]] = self._preprocessing_data.get("relevant_features")
         self._f_idx_to_feature_index: Dict[int, int] = self._preprocessing_data.get("f_idx_to_feature_index")
         self._timers.stop("preprocessing")
@@ -239,19 +252,18 @@ class TerminationBasedLearnerReduced:
             "verify_termination": False, #True,
             "optimality": False,
         }
-        if not contextual:
+        if not contextual and not rule_elimination:
             greedy_solver: GreedySolver = GreedySolver(self._preprocessing_data, self._state_factory, **options_for_greedy_solver)
-        else:
+        elif contextual:
             #greedy_solver: GreedySolverContextual = GreedySolverContextual(self._preprocessing_data, self._state_factory, **options_for_greedy_solver)
             greedy_solver: GreedySolverContextualAlt = GreedySolverContextualAlt(self._preprocessing_data, self._state_factory, **options_for_greedy_solver)
+        elif rule_elimination:
+            greedy_solver: GreedySolverByRuleElimination = GreedySolverByRuleElimination(self._preprocessing_data, self._state_factory, **options_for_greedy_solver)
         logging.info(f"DONE")
 
-        if True:
-            self._timers.resume("pricing/algorithm")
-            status, chosen, cost, decorations, feature_ranks = greedy_solver.solve(**options_for_greedy_solver)
-            self._timers.stop("pricing/algorithm")
-        else:
-            status, chosen, cost, decorations, feature_ranks = greedy_solver.dfs_solve(**options_for_greedy_solver)
+        self._timers.resume("pricing/algorithm")
+        status, chosen, cost, decorations, feature_ranks = greedy_solver.solve(**options_for_greedy_solver)
+        self._timers.stop("pricing/algorithm")
 
         if options_for_greedy_solver.get("verify_termination", False):
             terminates: bool = self._verify_termination(self._relevant_features, feature_ranks, self._f_idx_to_feature_index, self._solver_prefix, dump_asp_program)
@@ -473,6 +485,7 @@ class TerminationBasedLearnerReduced:
             "ext_states_by_change_on_feature": ext_states_by_change_on_feature,
             "features_by_bvalue_on_ext_state": features_by_bvalue_on_ext_state,
             "features_by_change_on_ext_state": features_by_change_on_ext_state,
+            "ext_state_to_feature_valuations": self._iteration_ext_state_to_feature_valuations,
         }
 
     def _calculate_ext_states_to_contexts(self,
@@ -493,61 +506,61 @@ class TerminationBasedLearnerReduced:
 
     def _calculate_requirements_for_good_transitions(self,
                                                      usable_features: intbitset,
-                                                     features_by_change_on_ext_state: Dict[Tuple[Tuple[int, int], str], intbitset],
-                                                     ext_states_to_contexts: Dict[Tuple[int, int], Set[Tuple[int, int]]] = None,
-                                                     m_pairs: MPairsContextual = None) -> Any:
-        if ext_states_to_contexts is None:
-            assert m_pairs is None
-            requirements_for_good_transitions: Dict[Tuple[int, int], intbitset] = dict()
-            for ext_state in self._iteration_ex_ext_states:
-                changing_features: intbitset = features_by_change_on_ext_state.get((ext_state, "dec"), intbitset()) | features_by_change_on_ext_state.get((ext_state, "inc"), intbitset())
-                requirements_for_good_transitions[ext_state] = changing_features & usable_features
-            return requirements_for_good_transitions
-        else:
-            # For each rule r, there is pair (f, \nu) such that
-            # 1. f changes in r
-            # 2. f is monotone in R given \nu
-            # 3. f is monotone (i.e., \nu is empty) OR r belongs to \varrho(R, \nu)
+                                                     features_by_change_on_ext_state: Dict[Tuple[Tuple[int, int], str], intbitset]) -> Any:
+        requirements_for_good_transitions: Dict[Tuple[int, int], intbitset] = dict()
+        for ext_state in self._iteration_ex_ext_states:
+            changing_features: intbitset = features_by_change_on_ext_state.get((ext_state, "dec"), intbitset()) | features_by_change_on_ext_state.get((ext_state, "inc"), intbitset())
+            requirements_for_good_transitions[ext_state] = changing_features & usable_features
+        return requirements_for_good_transitions
 
-            assert m_pairs is not None
-            nu_context_to_index: OrderedDict[Tuple[int, int], int] = OrderedDict()
-            fnu_pair_to_index: OrderedDict[Tuple[int, int], int] = OrderedDict()
-            fnu_idx_to_direction: List[str] = []
-            requirements_for_good_transitions: Dict[Tuple[int, int], intbitset] = defaultdict(intbitset)
-            for (ext_state, change), f_idxs in features_by_change_on_ext_state.items():
-                if change != "eqv":
-                    monotone_f_idxs: intbitset = f_idxs & m_pairs.monotone_features()
-                    assert monotone_f_idxs.issubset(usable_features)
-                    non_monotone_f_idxs: intbitset = (f_idxs - monotone_f_idxs) & usable_features
+    def _calculate_requirements_for_good_transitions_contextual(self,
+                                                                usable_features: intbitset,
+                                                                features_by_change_on_ext_state: Dict[Tuple[Tuple[int, int], str], intbitset],
+                                                                ext_states_to_contexts: Dict[Tuple[int, int], Set[Tuple[int, int]]],
+                                                                m_pairs: MPairsContextual) -> Any:
+        # For each rule r, there is pair (f, \nu) such that
+        # 1. f changes in r
+        # 2. f is monotone in R given \nu
+        # 3. f is monotone (i.e., \nu is empty) OR r belongs to \varrho(R, \nu)
 
-                    # Empty contexts for monotone features that change in r
-                    nu_idx: int = nu_context_to_index.setdefault((), len(nu_context_to_index))
-                    for f_idx in monotone_f_idxs:
+        nu_context_to_index: OrderedDict[Tuple[int, int], int] = OrderedDict()
+        fnu_pair_to_index: OrderedDict[Tuple[int, int], int] = OrderedDict()
+        fnu_idx_to_direction: List[str] = []
+        requirements_for_good_transitions: Dict[Tuple[int, int], intbitset] = defaultdict(intbitset)
+        for (ext_state, change), f_idxs in features_by_change_on_ext_state.items():
+            if change != "eqv":
+                monotone_f_idxs: intbitset = f_idxs & m_pairs.monotone_features()
+                assert monotone_f_idxs.issubset(usable_features)
+                non_monotone_f_idxs: intbitset = (f_idxs - monotone_f_idxs) & usable_features
+
+                # Empty contexts for monotone features that change in r
+                nu_idx: int = nu_context_to_index.setdefault((), len(nu_context_to_index))
+                for f_idx in monotone_f_idxs:
+                    fnu_idx: int = fnu_pair_to_index.setdefault((f_idx, nu_idx), len(fnu_pair_to_index))
+                    requirements_for_good_transitions[ext_state].add(fnu_idx)
+                    if fnu_idx >= len(fnu_idx_to_direction):
+                        fnu_idx_to_direction.append(change)
+
+                # Contexts (g_idx, bvalue) for conditional monotone features that change in r
+                contexts: Set[Tuple[int, int]] = ext_states_to_contexts.get(ext_state, [])
+                for g_idx, bvalue in contexts: # This is the context \nu = {g_idx <- bvalue} such that rule r belongs to \varrho(R, \nu)
+                    nu_idx: int = nu_context_to_index.setdefault((g_idx, bvalue), len(nu_context_to_index))
+                    monotone_given_nu_f_idxs: intbitset = non_monotone_f_idxs & m_pairs.f_idxs_for_g_idx(g_idx)[bvalue] # This is set of f_idx that change with r and are monotone given \nu
+                    for f_idx in monotone_given_nu_f_idxs:
                         fnu_idx: int = fnu_pair_to_index.setdefault((f_idx, nu_idx), len(fnu_pair_to_index))
                         requirements_for_good_transitions[ext_state].add(fnu_idx)
                         if fnu_idx >= len(fnu_idx_to_direction):
                             fnu_idx_to_direction.append(change)
 
-                    # Contexts (g_idx, bvalue) for conditional monotone features that change in r
-                    contexts: Set[Tuple[int, int]] = ext_states_to_contexts.get(ext_state, [])
-                    for g_idx, bvalue in contexts: # This is the context \nu = {g_idx <- bvalue} such that rule r belongs to \varrho(R, \nu)
-                        nu_idx: int = nu_context_to_index.setdefault((g_idx, bvalue), len(nu_context_to_index))
-                        monotone_given_nu_f_idxs: intbitset = non_monotone_f_idxs & m_pairs.f_idxs_for_g_idx(g_idx)[bvalue] # This is set of f_idx that change with r and are monotone given \nu
-                        for f_idx in monotone_given_nu_f_idxs:
-                            fnu_idx: int = fnu_pair_to_index.setdefault((f_idx, nu_idx), len(fnu_pair_to_index))
-                            requirements_for_good_transitions[ext_state].add(fnu_idx)
-                            if fnu_idx >= len(fnu_idx_to_direction):
-                                fnu_idx_to_direction.append(change)
+        # Complete requirements
+        uncovered_ext_states: Set[Tuple[int, int]] = self._iteration_ex_ext_states - set(requirements_for_good_transitions.keys())
+        for ext_state in uncovered_ext_states:
+            requirements_for_good_transitions[ext_state] = intbitset()
 
-            # Complete requirements
-            uncovered_ext_states: Set[Tuple[int, int]] = self._iteration_ex_ext_states - set(requirements_for_good_transitions.keys())
-            for ext_state in uncovered_ext_states:
-                requirements_for_good_transitions[ext_state] = intbitset()
+        for ext_state, requirement in requirements_for_good_transitions.items():
+            logging.info(f"REQUIREMENT: {ext_state} -> {len(requirement)} fnu-pair(s)")
 
-            for ext_state, requirement in requirements_for_good_transitions.items():
-                logging.info(f"REQUIREMENT: {ext_state} -> {len(requirement)} fnu-pair(s)")
-
-            return requirements_for_good_transitions, nu_context_to_index, fnu_pair_to_index, fnu_idx_to_direction
+        return requirements_for_good_transitions, nu_context_to_index, fnu_pair_to_index, fnu_idx_to_direction
 
     def _calculate_features_that_separate_ext_pairs(self,
                                                     instance_idx_to_ext_pairs: Dict[int, Tuple[int, int]],
@@ -683,11 +696,13 @@ class TerminationBasedLearnerReduced:
                 if len(requirement) == 0: return False, None, marked_ext_edges
         return True, ext_state_to_separating_features, marked_ext_edges
 
-    def _preprocess_termination(self, contextual: bool = False, monotone_only_by_dec: bool = False, separate_siblings: bool = False) -> Dict[str, Any]:
+    def _preprocess_termination(self, monotone_only_by_dec: bool = False, separate_siblings: bool = False, contextual: bool = False, rule_elimination: bool = False) -> Dict[str, Any]:
         logging.info(f"Preprocessing termination of features...")
         local_timer: Timer = Timer()
         self._timers.resume("feature/termination")
         self._timers.resume("pricing/preprocessing")
+
+        assert not contextual or not rule_elimination
 
         # Define relevant edges: those in paths and those for off-path relevant vertices
         self._calculate_ext_states_and_edges()
@@ -707,40 +722,59 @@ class TerminationBasedLearnerReduced:
 
         # Calculate companions m_pairs
         lazy: bool = False
-        if not contextual:
+        if not contextual and not rule_elimination:
             m_pairs: MPairs = MPairs(ds, monotone_only_by_dec=monotone_only_by_dec, lazy=lazy, timers=self._timers)
-        else:
+            m_counters = None
+        elif contextual:
             m_pairs: MPairsContextual = MPairsContextual(ds, monotone_only_by_dec=monotone_only_by_dec, lazy=lazy, timers=self._timers)
+            m_counters = None
+        elif rule_elimination:
+            # Calculate monotonicity counters
+            m_pairs = None
+            m_counters: MCounters = MCounters(ds, monotone_only_by_dec=monotone_only_by_dec, timers=self._timers)
+            watched_rules: WatchedRules = WatchedRules(ds, monotone_only_by_dec=monotone_only_by_dec, timers=self._timers)
 
-        features_by_bvalue_on_ext_state: Dict[Tuple[Tuple[int, int], int], intbitset] = m_pairs._features_by_bvalue_on_ext_state
-        features_by_change_on_ext_state: Dict[Tuple[Tuple[int, int], str], intbitset] = m_pairs._features_by_change_on_ext_state
-        monotone_features: intbitset = m_pairs.monotone_features()
+        if not rule_elimination:
+            features_by_bvalue_on_ext_state: Dict[Tuple[Tuple[int, int], int], intbitset] = m_pairs._features_by_bvalue_on_ext_state
+            features_by_change_on_ext_state: Dict[Tuple[Tuple[int, int], str], intbitset] = m_pairs._features_by_change_on_ext_state
+            monotone_features: intbitset = m_pairs.monotone_features()
 
-        if lazy:
-            usable_features: intbitset = m_pairs._relevant_features_idxs
-            pruned_relevant_features: List[Tuple[int, Feature]] = relevant_features
-            fg_companions: Dict[int, intbitset] = None
-            gf_companions: Dict[int, intbitset] = None
+            if lazy:
+                usable_features: intbitset = m_pairs._relevant_features_idxs
+                pruned_relevant_features: List[Tuple[int, Feature]] = relevant_features
+                fg_companions: Dict[int, intbitset] = None
+                gf_companions: Dict[int, intbitset] = None
+            else:
+                # Remove non-terminating features
+                usable_features: intbitset = m_pairs.usable_features()
+                pruned_relevant_features: List[Tuple[int, Feature]] = [(f_idx, feature) for f_idx, feature in relevant_features if f_idx in usable_features]
+                f_idx_to_feature_index: Dict[int, int] = {f_idx: index for index, (f_idx, feature) in enumerate(pruned_relevant_features)}
+                logging.info(f"{len(pruned_relevant_features)} feature(s) after removing non-terminating features (num_pruned={len(relevant_features) - len(pruned_relevant_features)})")
+                logging.info(f"{len(monotone_features)} monotone feature(s)")
         else:
-            # Remove non-terminating features
-            usable_features: intbitset = m_pairs.usable_features()
-            pruned_relevant_features: List[Tuple[int, Feature]] = [(f_idx, feature) for f_idx, feature in relevant_features if f_idx in usable_features]
-            f_idx_to_feature_index: Dict[int, int] = {f_idx: index for index, (f_idx, feature) in enumerate(pruned_relevant_features)}
-            logging.info(f"{len(pruned_relevant_features)} feature(s) after removing non-terminating features (num_pruned={len(relevant_features) - len(pruned_relevant_features)})")
-            logging.info(f"{len(monotone_features)} monotone feature(s)")
+            features_by_bvalue_on_ext_state: Dict[Tuple[Tuple[int, int], int], intbitset] = m_counters._features_by_bvalue_on_ext_state
+            features_by_change_on_ext_state: Dict[Tuple[Tuple[int, int], str], intbitset] = m_counters._features_by_change_on_ext_state
+            usable_features: intbitset = m_counters._relevant_features_idxs
+            pruned_relevant_features: List[Tuple[int, Feature]] = relevant_features
 
         # Requirements for good transitions
-        if not contextual:
+        if not contextual and not rule_elimination:
             requirements_for_good_transitions = self._calculate_requirements_for_good_transitions(usable_features, features_by_change_on_ext_state)
             nu_context_to_index = None
             fnu_pair_to_index = None
             fnu_idx_to_direction = None
-        else:
+        elif contextual:
             ext_states_to_contexts: Dict[Tuple[int, int], Set[Tuple[int, int]]] = self._calculate_ext_states_to_contexts(usable_features, features_by_change_on_ext_state)
-            requirements_for_good_transitions, nu_context_to_index, fnu_pair_to_index, fnu_idx_to_direction = self._calculate_requirements_for_good_transitions(usable_features,
-                                                                                                                                                                features_by_change_on_ext_state,
-                                                                                                                                                                ext_states_to_contexts,
-                                                                                                                                                                m_pairs)
+            requirements_for_good_transitions, nu_context_to_index, fnu_pair_to_index, fnu_idx_to_direction = self._calculate_requirements_for_good_transitions_contextual(usable_features,
+                                                                                                                                                                           features_by_change_on_ext_state,
+                                                                                                                                                                           ext_states_to_contexts,
+                                                                                                                                                                           m_pairs)
+        elif rule_elimination:
+            requirements_for_good_transitions = self._calculate_requirements_for_good_transitions(usable_features, features_by_change_on_ext_state)
+            nu_context_to_index = None
+            fnu_pair_to_index = None
+            fnu_idx_to_direction = None
+
         logging.info(f"{len(requirements_for_good_transitions)} requirement(s) for good transitions")
 
         # Features that separate goal from non-goal states in example paths
@@ -786,7 +820,7 @@ class TerminationBasedLearnerReduced:
         # Calculate features that separate sibling edges (if applicable)
         ext_sibling_to_separating_features: Dict[Tuple[int, int, Tuple[int, int]], intbitset] = dict()
         if separate_siblings:
-            assert False
+            raise RuntimeError("Option 'separate siblings' not yet implemented")
             for ext_edge in self._iteration_ext_edges:
                 instance_idx, (src_state_idx, dst_state_idx) = ext_edge
                 ext_state: Tuple[int, int] = (instance_idx, src_state_idx)
@@ -825,6 +859,8 @@ class TerminationBasedLearnerReduced:
             "bad_ext_edges": bad_ext_edges,
             "ext_sibling_to_separating_features": ext_sibling_to_separating_features,
             "m_pairs": m_pairs,
+            "m_counters": m_counters,
+            "watched_rules": watched_rules,
             "ex_ext_states": self._iteration_ex_ext_states,
             #"facts": {
             #    "monotone": set([ASPSolver.make_fact("monotone", f_idx) for f_idx in monotone_features]),

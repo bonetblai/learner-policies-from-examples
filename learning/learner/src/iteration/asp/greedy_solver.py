@@ -18,7 +18,7 @@ from ...util import Timer
 from ...state_space import StateFactory
 
 from .m_pairs import MPairs
-from .stratified_policy import StratifiedPolicy
+from .stratified_policy import StratifiedPolicy, StratifiedPolicyByFeatures
 
 
 class GreedySolver:
@@ -276,8 +276,7 @@ class GreedySolver:
         return decorations
 
     def _calculate_decorations2(self, features: intbitset, ranks: Dict[int, int], sigma: Set[Tuple[int, int]]) -> Dict[str, Dict[int, Dict[int, intbitset]]]:
-        numerical_features: intbitset = intbitset([f_idx for f_idx, _ in self._numerical_features])
-        policy: StratitiedPolicy = StratifiedPolicy(features, numerical_features, sigma, self._ext_state_to_ext_edge, self._ext_state_to_feature_valuations, self._bad_ext_edges)
+        policy: StratifiedPolicy = StratifiedPolicyByFeatures(features, self._numerical_f_idxs, sigma, self._ext_state_to_ext_edge, self._ext_state_to_feature_valuations, self._bad_ext_edges)
         decorations: Dict[str, Dict[int, Dict[int, intbitset]]] = policy.calculate_decorations(self._simplify_only_conditions)
         return decorations
 

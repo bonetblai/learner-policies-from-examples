@@ -17,94 +17,8 @@ from ...util import Timer
 from ...state_space import StateFactory
 
 #from .m_pairs_contextual import MPairsContextual
-
-
-class TransitiveClosure:
-    def __init__(self, TC: Any = None):
-        start_at: Dict[int, intbitset] = defaultdict(intbitset)
-        end_at: Dict[int, intbitset] = defaultdict(intbitset)
-        self._TC: Dict[str, Dict[int, intbitset]] = {"start-at": start_at, "end-at": end_at}
-        if TC is not None:
-            for src, dst in TC.edges():
-                self._add(src, dst)
-
-    def _new_edges(self, src: int, dst: int) -> Set[Tuple[int, int]]:
-        new_edges: Set[Tuple[int, int]] = set([(src, dst)])
-        # Add (x,dst) if (x,src)
-        new_edges |= set([(x, dst) for x in self.end_at(src)])
-        # Add (src,y) if (dst,y)
-        new_edges |= set([(src, y) for y in self.start_at(dst)])
-        # Add (x,y) if (x,src) & (dst,y)
-        new_edges |= set([(x, y) for x in self.end_at(src) for y in self.start_at(dst)])
-        return new_edges - self.edges()
-
-    def _add(self, src: int, dst: int):
-        self._TC["start-at"][src].add(dst)
-        self._TC["end-at"][dst].add(src)
-
-    def edge(self, src: int, dst: int) -> bool:
-        return src in self.end_at(dst)
-
-    def edges(self) -> Set[Tuple[int, int]]:
-        return set([(src, dst) for src, list_dst in self._TC["start-at"].items() for dst in list_dst])
-
-    def start_at(self, src: int) -> intbitset:
-        return self._TC["start-at"].get(src, intbitset())
-
-    def end_at(self, dst: int) -> intbitset:
-        return self._TC["end-at"].get(dst, intbitset())
-
-    def update(self, src: int, dst: int):
-        new_edges: List[Tuple[int, int]] = self._new_edges(src, dst)
-        for (src2, dst2) in new_edges:
-            self._add(src2, dst2)
-
-    def update_with_chain(self, chain: Tuple[Tuple[int, Tuple[int]]]):
-        for (src, dst) in zip([src for src, _ in chain[:-1]], [dst for dst, _ in chain[1:]]):
-            self.update(src, dst)
-
-    def keeps_acyclicity(self, chain: Tuple[Tuple[int, Tuple[int]]]) -> bool:
-        clone: TransitiveClosure = TransitiveClosure(self)
-        for (src, dst) in zip([src for src, _ in chain[:-1]], [dst for dst, _ in chain[1:]]):
-            new_edges: List[Tuple[int, int]] = clone._new_edges(src, dst)
-            for (src2, dst2) in new_edges:
-                if src2 == dst2:
-                    return False
-                else:
-                    clone._add(src2, dst2)
-        return True
-
-    def calculate_ranks(self, vertices: intbitset, unique: bool = False) -> Dict[int, int]:
-        # Vertices of rank = 0
-        ranks: Dict[int, int] = {i: 0 for i in vertices if len(self.end_at(i)) == 0}
-        assigned: intbitset = intbitset(list(ranks.keys()))
-
-        # Vertices of rank > 0
-        if not unique:
-            rank = 1
-            while len(assigned) < len(vertices):
-                new_assigned: intbitset = intbitset()
-                for j in vertices - assigned:
-                    # Vertex j has rank R iff there is i with rank R-1 such that (i, j) in TC AND there is no k with (i, k) AND (k, j) in TC
-                    below: List[int] = [i for i in self.end_at(j) if ranks.get(i) == rank - 1 and len(self.start_at(i) & self.end_at(j)) == 0]
-                    if len(below) > 0:
-                        ranks[j] = rank
-                        new_assigned.add(j)
-                        assigned.add(j)
-                assert len(new_assigned) > 0
-                assigned |= new_assigned
-                rank += 1
-        else:
-            rank = 1
-            while len(assigned) < len(vertices):
-                for j in vertices - assigned:
-                    if len(self.end_at(j) - assigned) == 0:
-                        ranks[j] = rank
-                        assigned.add(j)
-                        break
-                rank += 1
-
-        return ranks
+from .stratified_policy import StratifiedPolicy, StratifiedPolicyByFeaturesContextual
+from .transitive_closure import TransitiveClosure
 
 
 class GreedySolverContextualAlt:
@@ -165,13 +79,15 @@ class GreedySolverContextualAlt:
         self._ext_state_to_separating_features_for_deadend_paths: Dict[Tuple[int, int], Dict[Tuple[int, Tuple[int, int]], intbitset]] = self._preprocessing_data.get("ext_state_to_separating_features_for_deadend_paths")
         #XXX self._ext_sibling_to_separating_features: Dict[Tuple[int, int, Tuple[int, int]], intbitset] = self._preprocessing_data.get("ext_sibling_to_separating_features")
         self._ext_state_to_ext_edge: Dict[Tuple[int, int], Tuple[int, Tuple[int, int]]] = self._preprocessing_data.get("ext_state_to_ext_edge")
+        self._bad_ext_edges: Set[Tuple[int, Tuple[int, int]]] = self._preprocessing_data.get("bad_ext_edges")
 
         self._m_pairs: MPairsContextual = self._preprocessing_data.get("m_pairs")
         self._monotone_features: intbitset = self._m_pairs.monotone_features()
         #XXX self._ex_ext_states: Set[Tuple[int, int]] = self._preprocessing_data.get("ex_ext_states")
 
         # Calculate numerical features
-        self._numerical_features: intbitset = intbitset([f_idx for f_idx, feature in self._relevant_features if isinstance(feature.dlplan_feature, dlplan_core.Numerical)])
+        self._numerical_features: List[Tuple[int, Feature]] = [(f_idx, feature) for f_idx, feature in self._relevant_features if isinstance(feature.dlplan_feature, dlplan_core.Numerical)]
+        self._numerical_f_idxs: intbitset = intbitset([f_idx for f_idx, _ in self._numerical_features])
 
         # Construct requirements, one per ex-edge and one per pair of goal and non-goal xstates
         self._annotated_requirements: List[Tuple[Dict[str, Any], intbitset]] = []
@@ -188,7 +104,7 @@ class GreedySolverContextualAlt:
         self._ext_state_to_feature_valuations: Dict[Tuple[int, int], np.ndarray] = self._preprocessing_data.get("ext_state_to_feature_valuations")
 
     def _is_numerical(self, f_idx: int) -> bool:
-        return f_idx in self._numerical_features
+        return f_idx in self._numerical_f_idxs
 
     def _f_idxs_for_fnu_idx(self, fnu_idx: int) -> Tuple[int, int]:
         f_idx, nu_idx = self._fnu_pairs[fnu_idx]
@@ -237,14 +153,14 @@ class GreedySolverContextualAlt:
                           TC: TransitiveClosure) -> bool:
         cost: int = feature_costs[f_idx_index]
         chain: Tuple[Tuple[int, Tuple[int]]] = feature_chains[f_idx_index]
-        return cost > 0 and chain is not None and TC.keeps_acyclicity(chain)
+        return cost > 0 and chain is not None and TC.acyclic_if_path_added([f_idx for f_idx, _ in chain])
 
     def _score_fn(self,
                   f_idx_index: int,
                   pending_requirements_fnu_idxs: List[int],
                   pending_requirements_f_idxs: List[int],
                   feature_costs: List[int],
-                  feature_chains: List[Tuple[Tuple[int, Tuple[int]]]]) -> float:
+                  feature_chains: List[Tuple[Tuple[int, Tuple[int]]]]) -> Tuple[float]:
         chain: Tuple[Tuple[int, Tuple[int]]] = feature_chains[f_idx_index]
         chain_cost: int = sum([feature_costs[self._f_idx_to_feature_index.get(g_idx)] for g_idx, _ in chain])
         fnu_idxs_in_chain: intbitset = intbitset([self._fnu_pair_to_index.get((g_idx, self._nu_context_to_index.get(context))) for g_idx, context in chain])
@@ -252,134 +168,12 @@ class GreedySolverContextualAlt:
         assert all([fnu_idx is not None for fnu_idx in fnu_idxs_in_chain])
         solved_requirements: List[int] = [i for i in pending_requirements_fnu_idxs if len(fnu_idxs_in_chain & self._requirements[i][1]) > 0] + [i for i in pending_requirements_f_idxs if len(g_idxs_in_chain & self._requirements[i][1]) > 0]
         if len(solved_requirements) == 0:
-            return 0
+            return (0,)
         elif chain_cost == 0:
-            return 1e6
+            return (1e6,)
         else:
-            return len(solved_requirements) / chain_cost
-
-    def _calculate_decorations(self, fnu_idxs: intbitset, ext_states_to_fnu_idxs: Dict[Tuple[int, int], intbitset]) -> Dict[str, Dict[int, Dict[int, intbitset]]]:
-        unknowns: Dict[int, Dict[int, intbitset]] = defaultdict(lambda: defaultdict(intbitset))
-        dont_cares: Dict[int, Dict[int, intbitset]] = defaultdict(lambda: defaultdict(intbitset))
-
-        fnu_pairs: List[Tuple[int, int]] = [self._fnu_pairs[fnu_idx] for fnu_idx in fnu_idxs]
-        varrho: Dict[int, Set[Tuple[int, int]]] = defaultdict(set)
-        for f_idx, nu_idx in fnu_pairs:
-            varrho[f_idx].add(self._nu_contexts[nu_idx])
-        f_idxs: intbitset = intbitset([f_idx for f_idx, _ in fnu_pairs]) | intbitset([nu_context[0] for nu_contexts in varrho.values() for nu_context in nu_contexts if len(nu_context) > 0])
-        logging.debug(f"fnu_pairs: {fnu_pairs}")
-        logging.debug(f"varrho: {varrho}")
-        logging.debug(f"f_idxs: {sorted(f_idxs)}")
-
-        # Simplify conditions
-        if True: # CAUSES CYCLE IN CHILDSNACK
-            for ext_state, fnu_idxs in ext_states_to_fnu_idxs.items():
-                assert len(fnu_idxs) == 1
-                fnu_idx: int = list(fnu_idxs)[0]
-                f_idx, nu_idx = self._fnu_pairs[fnu_idx]
-                nu_context: Tuple[int, int] = self._nu_contexts[nu_idx]
-                g_idx: int = None if len(nu_context) == 0 else nu_context[0]
-                g_value: int = None if len(nu_context) == 0 else nu_context[1]
-
-                ext_edge: Tuple[int, Tuple[int, int]] = self._ext_state_to_ext_edge.get(ext_state)
-                src_feature_values: np.ndarray = self._ext_state_to_feature_valuations.get(ext_state)
-                dst_feature_values: np.ndarray = self._ext_state_to_feature_valuations.get((ext_edge[0], ext_edge[1][1]))
-                conditions: Dict[int, str] = {h_idx: "EQ" if src_feature_values[h_idx] == 0 else "GT" for h_idx in f_idxs}
-                effects: List[Tuple[int, int]] = [(h_idx, dst_feature_values[h_idx] - src_feature_values[h_idx]) for h_idx in f_idxs]
-                effects: Dict[int, str] = {h_idx: "BOT" if d == 0 else "INC" if d > 0 else "DEC" for h_idx, d in effects}
-                #logging.info(f"    conditions: {conditions}")
-                #logging.info(f"       effects: {effects}")
-
-                for h_idx, condition in conditions.items():
-                    effect: str = effects.get(h_idx)
-                    if condition == "EQ" and h_idx != g_idx: # Last condition holds when either g_idx is None or g_idx is not None
-                        # Add r' = cond(r) + (h, GT) => eff(r)A
-                        dont_cares[ext_state[0]][ext_state[1]].add(h_idx)
-                    elif condition == "GT" and effect != "DEC" and h_idx != g_idx: # Last condition holds when either g_idx is None or g_idx is not None
-                        # Add r' = cond(r) + (h, EQ) => eff(r)
-                        dont_cares[ext_state[0]][ext_state[1]].add(h_idx)
-
-        # Simplify effects
-        if True: # CAUSES CYCLE IN GRIPPER
-            for ext_state, fnu_idxs in ext_states_to_fnu_idxs.items():
-                assert len(fnu_idxs) == 1
-                fnu_idx: int = list(fnu_idxs)[0]
-                f_idx, nu_idx = self._fnu_pairs[fnu_idx]
-                nu_context: Tuple[int, int] = self._nu_contexts[nu_idx]
-                g_idx: int = None if len(nu_context) == 0 else nu_context[0]
-                g_value: int = None if len(nu_context) == 0 else nu_context[1]
-
-                ext_edge: Tuple[int, Tuple[int, int]] = self._ext_state_to_ext_edge.get(ext_state)
-                src_feature_values: np.ndarray = self._ext_state_to_feature_valuations.get(ext_state)
-                dst_feature_values: np.ndarray = self._ext_state_to_feature_valuations.get((ext_edge[0], ext_edge[1][1]))
-                conditions: Dict[int, str] = {h_idx: "EQ" if src_feature_values[h_idx] == 0 else "GT" for h_idx in f_idxs}
-                effects: List[Tuple[int, int]] = [(h_idx, dst_feature_values[h_idx] - src_feature_values[h_idx]) for h_idx in f_idxs]
-                effects: Dict[int, str] = {h_idx: "BOT" if d == 0 else "INC" if d > 0 else "DEC" for h_idx, d in effects}
-                #logging.info(f"    conditions: {conditions}")
-                #logging.info(f"       effects: {effects}")
-
-                for h_idx, effect in effects.items():
-                    # If g_idx is None, f_idx is unconditionally monotone and its effect cannot be simplified
-                    if g_idx is not None and h_idx not in [f_idx, g_idx]:
-                        # Let C = {\nu' : (h, \nu') is pair for h} be set of pairs for h
-                        # If {\nu', cond(r)} is inconsistent for ALL \nu' in C:
-                        #     Replace effect (h, e) by (h, UNK)
-                        nu_contexts_for_h_idx: Set[Tuple[int, int]] = varrho.get(h_idx)
-                        if any([len(nu_context) == 0 for nu_context in nu_contexts_for_h_idx]):
-                            continue
-                        if all([conditions[x_idx] != x_value for x_idx, x_value in nu_contexts_for_h_idx]):
-                            unknowns[ext_state[0]][ext_state[1]].add(h_idx)
-
-        # Merge rules
-        some_change: bool = True
-        ext_states: List[Tuple[int, int]] = list(ext_states_to_fnu_idxs.keys())
-        ext_pairs: List[Tuple[Tuple[int, int], Tuple[int, int]]] = [(ext_state0, ext_state1) for ext_state0, ext_state1 in product(ext_states, ext_states) if ext_state0[0] == ext_state1[0] and ext_state0[1] < ext_state1[1]]
-        logging.warning("*** DISABLE MERGE OF RULES")
-        while False and some_change:
-            some_change = False
-            for ext_state0, ext_state1 in ext_pairs:
-                instance_idx: int = ext_state0[0]
-                ext_edge0: Tuple[int, Tuple[int, int]] = self._ext_state_to_ext_edge.get(ext_state0)
-                ext_edge1: Tuple[int, Tuple[int, int]] = self._ext_state_to_ext_edge.get(ext_state1)
-                #state_idx0, state_idx1 = ext_state0[1], ext_state1[1]
-                #dont_cares0: intbitset = dont_cares.get(instance_idx, dict()).get(state_idx0, intbitset())
-                #dont_cares1: intbitset = dont_cares.get(instance_idx, dict()).get(state_idx1, intbitset())
-                #dont_cares_both: intbitset = dont_cares0 | dont_cares1
-
-                src_feature_values0: np.ndarray = self._ext_state_to_feature_valuations.get(ext_state0)
-                src_feature_values1: np.ndarray = self._ext_state_to_feature_valuations.get(ext_state1)
-                condition0: List[int] = [src_feature_values0[f_idx] for f_idx in f_idxs]
-                condition1: List[int] = [src_feature_values1[f_idx] for f_idx in f_idxs]
-                condition_diff: List[int] = [f_idx for i, f_idx in enumerate(f_idxs) if condition0[i] != condition1[i]]
-
-                dst_feature_values0: np.ndarray = self._ext_state_to_feature_valuations.get((instance_idx, ext_edge0[1][1]))
-                dst_feature_values1: np.ndarray = self._ext_state_to_feature_valuations.get((instance_idx, ext_edge1[1][1]))
-                effect0: List[int] = [dst_feature_values0[f_idx] for f_idx in f_idxs]
-                effect1: List[int] = [dst_feature_values1[f_idx] for f_idx in f_idxs]
-                effect_diff: List[int] = [f_idx for i, f_idx in enumerate(f_idxs) if effect0[i] != effect1[i]]
-                unknown_common: intbitset = unknowns.get(instance_idx, dict()).get(ext_state0[1], intbitset()) & unknowns.get(instance_idx, dict()).get(ext_state1[1], intbitset())
-                effect_equivalent: bool = len([f_idx for f_idx in effect_diff if f_idx not in unknown_common]) == 0
-
-                if effect_equivalent and len(condition_diff) == 1:
-                    f_idx: int = condition_diff[0]
-                    num_additions: int = 0
-                    if f_idx not in dont_cares.get(instance_idx, dict()).get(ext_state0[1], []):
-                        dont_cares[instance_idx][ext_state0[1]].add(f_idx)
-                        num_additions += 1
-                        logging.info(f"ADD don't care f{f_idx} to rule0 associated with {ext_state0}")
-                    if f_idx not in dont_cares.get(instance_idx, dict()).get(ext_state1[1], []):
-                        dont_cares[instance_idx][ext_state1[1]].add(f_idx)
-                        logging.info(f"ADD don't care f{f_idx} to rule1 associated with {ext_state1}")
-                        num_additions += 1
-                    some_change = num_additions > 0
-                    #if some_change: assert False
-        logging.warning("*** FULL MERGE OF RULEs NOT YET IMPLEMENTED")
-
-        # Construct and return decorations
-        dont_cares: Dict[int, Dict[int, intbitset]] = {instance_idx: {state_idx: f_idxs for state_idx, f_idxs in subdict.items()} for instance_idx, subdict in dont_cares.items()}
-        unknowns: Dict[int, Dict[int, intbitset]] = {instance_idx: {state_idx: f_idxs for state_idx, f_idxs in subdict.items()} for instance_idx, subdict in unknowns.items()}
-        decorations: Dict[str, Dict[int, Dict[int, intbitset]]] = {"unknown": unknowns, "dont_care": dont_cares}
-        return decorations
+            numerical_f_idx_index: int = 1 if self._feature_index_to_f_idx[f_idx_index] in self._numerical_f_idxs else 0
+            return (len(solved_requirements) / chain_cost, numerical_f_idx_index)
 
     def _calculate_decorations2(self,
                                 chosen_fnu_idxs: intbitset,
@@ -413,7 +207,7 @@ class GreedySolverContextualAlt:
         #    varrho[f_idx].add(self._nu_contexts[nu_idx])
         #logging.info(f"fnu_pairs: {fnu_pairs}")
         #logging.info(f"varrho: {varrho}")
-        #logging.info(f"f_idxs={sorted(chosen_f_idxs)}, numerical={sorted(chosen_f_idxs & self._numerical_features)}")
+        #logging.info(f"f_idxs={sorted(chosen_f_idxs)}, numerical={sorted(chosen_f_idxs & self._numerical_f_idxs)}")
 
         # Calculate decorations for each rule
         for ext_state, fnu_idxs_for_ext_state in ext_states_to_fnu_idxs.items():
@@ -497,6 +291,18 @@ class GreedySolverContextualAlt:
         decorations: Dict[str, Dict[int, Dict[int, intbitset]]] = {"unknown": unknowns, "dont_care": dont_cares}
         return decorations
 
+    def _calculate_decorations3(self,
+                                chosen_fnu_idxs: intbitset,
+                                chosen_f_idxs: intbitset,
+                                ext_states_to_fnu_idxs: Dict[Tuple[int, int], intbitset],
+                                ranks: Dict[int, int],
+                                sigma: Dict[Tuple[int, Tuple[int, int]], str],
+                                inv_sigma: Dict[Tuple[int, int], List[int]],
+                                TC: TransitiveClosure) -> Dict[str, Dict[int, Dict[int, intbitset]]]:
+        policy: StratifiedPolicy = StratifiedPolicyByFeaturesContextual(chosen_f_idxs, self._numerical_f_idxs, sigma, self._ext_state_to_ext_edge, self._ext_state_to_feature_valuations, self._bad_ext_edges)
+        decorations: Dict[str, Dict[int, Dict[int, intbitset]]] = policy.calculate_decorations(self._simplify_only_conditions)
+        return decorations
+
     # Solver that at each iteration solves a requiement. Number of iteration is thus bounded by number of requirements.
     def solve(self, **kwargs) -> Tuple[bool, intbitset, int, Dict[str, Dict[int, Dict[int, intbitset]]], int]:
         logging.info(f"Starting greedy solver...")
@@ -536,8 +342,9 @@ class GreedySolverContextualAlt:
             eligible_features: List[int] = [f_idx_index for f_idx_index in range(len(self._relevant_features)) if self._eligible_feature(f_idx_index, feature_costs, feature_chains, TC)]
 
             # Sort eligible features by score
-            eligible_features_with_score: List[Tuple[int, float]] = [(f_idx_index, self._score_fn(f_idx_index, pending_requirements_fnu_idxs, pending_requirements_f_idxs, feature_costs, feature_chains)) for f_idx_index in eligible_features]
-            sorted_eligible_features: List[Tuple[int, float]] = sorted(eligible_features_with_score, key=lambda item: item[1], reverse=True)
+            eligible_features_with_score: List[Tuple[int, Tuple[float]]] = [(f_idx_index, self._score_fn(f_idx_index, pending_requirements_fnu_idxs, pending_requirements_f_idxs, feature_costs, feature_chains)) for f_idx_index in eligible_features]
+            eligible_features_with_score: List[Tuple[int, Tuple[float]]] = [(f_idx_index, score) for (f_idx_index, score) in eligible_features_with_score if score != (0,)]
+            sorted_eligible_features: List[Tuple[int, Tuple[float]]] = sorted(eligible_features_with_score, key=lambda item: item[1], reverse=True)
             logging.info(f"{len(sorted_eligible_features)} eligible feature(s) computed in {timer.get_elapsed_sec():0.2f} second(s)")
 
             # Check for early termination due to non-existence of solution
@@ -583,7 +390,7 @@ class GreedySolverContextualAlt:
                 raise RuntimeError(f"No eligible features")
 
             # Choose a best items
-            best_score: float = sorted_eligible_features[0][1]
+            best_score: Tuple[float] = sorted_eligible_features[0][1]
             best_features: List[int] = [f_idx_index for f_idx_index, score in sorted_eligible_features if score == best_score]
 
             f_idx_index: int = random.choice(best_features)
@@ -600,8 +407,10 @@ class GreedySolverContextualAlt:
             incumbent_f_idxs |= g_idxs_in_chain
 
             # Update TC
-            TC.update_with_chain(f_idx_chain)
-            print(f"Edges in TC: {list(TC.edges())}")
+            assert f_idx_chain is not None
+            f_idx_path: List[int] = [f_idx for f_idx, _ in f_idx_chain]
+            TC.update_with_path(f_idx_path)
+            logging.info(f"Edges in TC: {list(TC.edges())}")
 
             # Revise costs
             revised_g_idxs: intbitset = intbitset()
@@ -663,7 +472,7 @@ class GreedySolverContextualAlt:
         decorations: Dict[str, Dict[int, Dict[int, intbitset]]] = dict()
         if self._simplify_policy:
             #decorations: Dict[str, Dict[int, Dict[int, intbitset]]] = self._calculate_decorations(chosen_fnu_idxs, ext_states_to_fnu_idxs)
-            decorations: Dict[str, Dict[int, Dict[int, intbitset]]] = self._calculate_decorations2(chosen_fnu_idxs, chosen_f_idxs, ext_states_to_fnu_idxs, ranks, sigma, inv_sigma, TC)
+            decorations: Dict[str, Dict[int, Dict[int, intbitset]]] = self._calculate_decorations3(chosen_fnu_idxs, chosen_f_idxs, ext_states_to_fnu_idxs, ranks, sigma, inv_sigma, TC)
         logging.info(f"Decorations: {decorations}")
 
         local_timer.stop()

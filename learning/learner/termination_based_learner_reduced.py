@@ -114,6 +114,10 @@ def _advance_selected_idxs(selected_idxs: List[int],
     elif next_instance_idx > max_seen_instance_idx:
         next_instance_idxs = [next_instance_idx]
     else:
+        # CHECK: Following assertion may fail if --randomized_sketch_test
+        #        1. Learned policy "passes" verification over learning instances.
+        #        2. Verification over all instances goes again over learning instances.
+        #        3. Second time, over learning instances, verification fails because it reaches a state not seen before.
         assert next_instance_idx not in selected_idxs
         next_instance_idxs = selected_idxs + [next_instance_idx]
 
@@ -163,6 +167,7 @@ def reduced_termination_based_learn_sketch_for_problem_class(
     simplify_only_conditions: bool = False,
     separate_siblings: bool = False,
     contextual: bool = False,
+    rule_elimination: bool = False,
     monotone_only_by_dec: bool = False,
     uniform_costs: bool = False,
     verbose: bool = False,
@@ -562,6 +567,7 @@ def reduced_termination_based_learn_sketch_for_problem_class(
                                 "simplify_only_conditions": simplify_only_conditions,
                                 "separate_siblings": separate_siblings,
                                 "contextual": contextual,
+                                "rule_elimination": rule_elimination,
                                 "monotone_only_by_dec": monotone_only_by_dec,
                                 "uniform_costs": uniform_costs,
                                 "verbose": verbose,

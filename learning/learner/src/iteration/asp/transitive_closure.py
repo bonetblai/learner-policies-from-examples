@@ -69,7 +69,7 @@ class TransitiveClosure:
 
     def calculate_ranks(self, vertices: intbitset, unique: bool = False) -> Dict[int, int]:
         # If not acyclic, return None as there is no proper ranking
-        if not self.acyclic_: return None
+        if not self._acyclic: return None
 
         # Vertices of rank = 0
         ranks: Dict[int, int] = {i: 0 for i in vertices if len(self.end_at(i)) == 0}
