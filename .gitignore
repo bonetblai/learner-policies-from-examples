@@ -1,5 +1,9 @@
 ############################## PYTHON ##############################
 
+learning/benchmarks/*/*/workspace/iterations.*
+learning/benchmarks/*/*/workspace/output.*
+learning/benchmarks/*/*/workspace/plans.*
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
