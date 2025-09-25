@@ -54,12 +54,16 @@ if __name__ == "__main__":
 
     # Genex options
     genex_options = parser.add_argument_group("Genex options")
-    genex_options.add_argument("--contextual", action=argparse.BooleanOptionalAction, default=False, help="(Conditional) monotonicity by contexts")
     genex_options.add_argument("--monotone_only_by_dec", action=argparse.BooleanOptionalAction, default=False, help="(Conditional) monotonicity only by decrements")
     genex_options.add_argument("--uniform_costs", action=argparse.BooleanOptionalAction, default=False, help="Optimize number of features rather than the sum of complexities")
     genex_options.add_argument("--simplify_policy", action=argparse.BooleanOptionalAction, default=False, help="Whether to add don't care conditions and unknown effects to projected rules")
     genex_options.add_argument("--simplify_only_conditions", action=argparse.BooleanOptionalAction, default=False, help="If simplify policy, simplify only conditions")
     genex_options.add_argument("--separate_siblings", action=argparse.BooleanOptionalAction, default=False, help="Whether to separate chosen transition from sibling transitions")
+
+    # Other learning paradigms
+    genex_options = parser.add_argument_group("Other learning paradigms")
+    genex_options.add_argument("--contextual", action=argparse.BooleanOptionalAction, default=False, help="(Conditional) monotonicity by contexts")
+    genex_options.add_argument("--rule_elimination", action=argparse.BooleanOptionalAction, default=False, help="Learning by rule elimination")
 
     # Wrapper options
     wrapper_options = parser.add_argument_group("Wrapper options")
@@ -149,10 +153,11 @@ if __name__ == "__main__":
         "disable_optimization_decorations": args.disable_optimization_decorations,
         "deadends": args.deadends,
         "solver_prefix": args.solver_prefix,
-        "simplify_policy": args.simplify_policy,
+        "simplify_policy": args.simplify_policy or args.simplify_only_conditions,
         "simplify_only_conditions": args.simplify_only_conditions,
         "separate_siblings": args.separate_siblings,
         "contextual": args.contextual,
+        "rule_elimination": args.rule_elimination,
         "monotone_only_by_dec": args.monotone_only_by_dec,
         "uniform_costs": args.uniform_costs,
         "verbose": args.verbose,
