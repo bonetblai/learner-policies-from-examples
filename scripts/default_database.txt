@@ -27,7 +27,7 @@
 
     "childsnack": {"domain": "learning/benchmarks/tractable/childsnack", "xrefs": ["args1"]},
     "childsnack_untyped": {"domain": "learning/benchmarks/tractable/childsnack_untyped", "xrefs": ["args1"]},
-    "childsnack-group": {"group": ["childsnack", "childsnack_untyped"]},
+    "childsnack-group": {"group": ["childsnack", "childsnack_untyped"], "args": ["--deadends"]},
 
     "delivery": {"domain": "learning/benchmarks/tractable/delivery", "xrefs": ["args1"]},
     "delivery1": {"domain": "learning/benchmarks/tractable/delivery1", "xrefs": ["args1"]},
@@ -67,7 +67,9 @@
     "reward": {"domain": "learning/benchmarks/tractable/reward", "xrefs": ["args1"]},
     "rovers": {"domain": "learning/benchmarks/tractable/rovers", "xrefs": ["args1"]},
     "satellite": {"domain": "learning/benchmarks/tractable/satellite", "xrefs": ["args1"], "args": ["--deadends"]},
+
     "sokoban-1stone-v3-7x7": {"domain": "learning/benchmarks/tractable/sokoban-1stone-v3-7x7", "xrefs": ["args1"], "args": ["--deadends", "--instance_selection forward+"], "time": "16:00:00"},
+    "sokoban-1stone-v3-7x7-2": {"domain": "learning/benchmarks/tractable/sokoban-1stone-v3-7x7-2", "xrefs": ["args1"], "args": ["--deadends", "--instance_selection forward+"], "time": "16:00:00"},
 
     "spanner": {"domain": "learning/benchmarks/tractable/spanner", "xrefs": ["args1"], "args": ["--planner bfws", "--deadends"]},
     "spanner-1nut": {"domain": "learning/benchmarks/tractable/spanner-1nut", "xrefs": ["args1"], "args": ["--deadends"]},
@@ -89,7 +91,7 @@
     "zenotravel3": {"domain": "learning/benchmarks/tractable/zenotravel3", "xrefs": ["args1"], "args": ["--deadends", "--randomized_sketch_test 2", "--instance_selection forward+"]},
     "zenotravel-group": {"group": ["zenotravel-1person", "zenotravel-1plane", "zenotravel-1plane-1person", "zenotravel", "zenotravel2", "zenotravel3"]},
 
-    "standard": {"group": ["8puzzle-group", "barman-group", "blocks-group", "childsnack-group", "delivery-group", "depot", "driverlog", "ferry", "freecell", "grid-group", "gripper", "hiking-group", "logistics-group", "logistics-group-20", "miconic", "reward", "rovers", "satellite", "sokoban-1stone-v3-7x7", "spanner-group", "tetris-opt14-strips-no-costs", "tidybot-opt11-strips", "tpp", "visitall-group", "zenotravel-group"]},
+    "standard": {"group": ["8puzzle-group", "barman-group", "blocks-group", "childsnack-group", "delivery-group", "depot", "driverlog", "ferry", "freecell", "grid-group", "gripper", "hiking-group", "logistics-group", "logistics-group-20", "miconic", "reward", "rovers", "satellite", "sokoban-1stone-v3-7x7", "sokoban-1stone-v3-7x7-2", "spanner-group", "tetris-opt14-strips-no-costs", "tidybot-opt11-strips", "tpp", "visitall-group", "zenotravel-group"]},
     "standard-simplify-only-conditions": {"group": ["standard"], "args": ["--simplify_only_conditions"]},
     "kr2025": {"group": ["standard", "standard-simplify-only-conditions"]},
 
@@ -119,11 +121,14 @@
     # Contextual
     # Default arguments
     "args3": {"xrefs": ["args1"], "args": ["--monotone_only_by_dec", "--contextual"]},
-    "contextual": {"group": ["standard"], "xrefs": ["args3"]},
+    "contextual": {"group": ["standard"], "args": ["--contextual"]},
     "g2": {"group": ["ferry"], "xrefs": ["args1"], "args": []},
     "test": {"group": ["blocks-group"], "xrefs": ["args3"]},
     "8puzzle-2tiles-contextual": {"group": ["8puzzle-2tiles"], "xrefs": ["args3"]},
     "8puzzle-1tile-contextual": {"group": ["8puzzle-1tile"], "xrefs": ["args3"], "args": ["--complexity_limit 20"]},
     "blocks_3-v2-contextual": {"group": ["blocks_3-v2"], "xrefs": ["args3"]},
     "logistics-indexicals-contextual": {"group": ["logistics-indexicals"], "xrefs": ["args3"]},
+
+    # Rule-based elimination
+    "rule-elimination": {"group": ["standard"], "args": ["--rule_elimination", "--instance_selection forward+", "--simplify_policy"]},
 }
