@@ -189,6 +189,13 @@ class GreedySolverByRuleElimination:
             non_goal_ext_state: Tuple[int, int] = (pair[0], pair[1][1])
             goal_boolean_valuation: Tuple[int] = ext_state_to_valuations_boolean.get(goal_ext_state)
             non_goal_boolean_valuation: Tuple[int] = ext_state_to_valuations_boolean.get(non_goal_ext_state)
+            if non_goal_boolean_valuation is None:
+                # This can happen because set of transitions above doesn't not contain all the relevant transitions
+                valuations: np.ndarray = self._ext_state_to_feature_valuations.get(non_goal_ext_state)[features]
+                boolean_valuations: List[int] = [1 if value > 0 else 0 for value in valuations]
+                ext_state_to_valuations[non_goal_ext_state] = valuations
+                ext_state_to_valuations_boolean[non_goal_ext_state] = boolean_valuations
+                non_goal_boolean_valuation = boolean_valuations
             feature_valuations_for_goals.add(tuple([(i, goal_boolean_valuation[i]) for i in goal_separating_features]))
             feature_valuations_for_non_goals.add(tuple([(i, non_goal_boolean_valuation[i]) for i in goal_separating_features]))
         assert len(feature_valuations_for_goals & feature_valuations_for_non_goals) == 0
