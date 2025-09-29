@@ -31,8 +31,8 @@ class WatchedRules:
         """
         self._ext_states_by_bvalue_on_feature: Dict[Tuple[int, int], Set[Tuple[int, int]]] = ds.get("ext_states_by_bvalue_on_feature")
         self._ext_states_by_change_on_feature: Dict[Tuple[int, str], Set[Tuple[int, int]]] = ds.get("ext_states_by_change_on_feature")
-        self._features_by_bvalue_on_ext_state: Dict[Tuple[Tuple[int, int], int], intbitset] = ds.get("features_by_bvalue_on_ext_state")
         """
+        self._features_by_bvalue_on_ext_state: Dict[Tuple[Tuple[int, int], int], intbitset] = ds.get("features_by_bvalue_on_ext_state")
         self._features_by_change_on_ext_state: Dict[Tuple[Tuple[int, int], str], intbitset] = ds.get("features_by_change_on_ext_state")
         """
         self._features_decreased_by_some_rule: intbitset = ds.get("features_decreased_by_some_rule")
