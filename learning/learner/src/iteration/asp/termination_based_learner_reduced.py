@@ -31,7 +31,7 @@ LIST_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
 from .m_pairs import MPairs
 from .m_pairs_contextual import MPairsContextual
-from .m_counters import MCounters
+#from .m_counters import MCounters
 from .watched_rules import WatchedRules
 
 from .greedy_solver import GreedySolver
@@ -731,7 +731,8 @@ class TerminationBasedLearnerReduced:
         elif rule_elimination:
             # Calculate monotonicity counters
             m_pairs = None
-            m_counters: MCounters = MCounters(ds, monotone_only_by_dec=monotone_only_by_dec, timers=self._timers)
+            m_counters = None
+            #m_counters: MCounters = MCounters(ds, monotone_only_by_dec=monotone_only_by_dec, timers=self._timers)
             watched_rules: WatchedRules = WatchedRules(ds, monotone_only_by_dec=monotone_only_by_dec, timers=self._timers)
 
         if not rule_elimination:
@@ -752,9 +753,12 @@ class TerminationBasedLearnerReduced:
                 logging.info(f"{len(pruned_relevant_features)} feature(s) after removing non-terminating features (num_pruned={len(relevant_features) - len(pruned_relevant_features)})")
                 logging.info(f"{len(monotone_features)} monotone feature(s)")
         else:
-            features_by_bvalue_on_ext_state: Dict[Tuple[Tuple[int, int], int], intbitset] = m_counters._features_by_bvalue_on_ext_state
-            features_by_change_on_ext_state: Dict[Tuple[Tuple[int, int], str], intbitset] = m_counters._features_by_change_on_ext_state
-            usable_features: intbitset = m_counters._relevant_features_idxs
+            #features_by_bvalue_on_ext_state: Dict[Tuple[Tuple[int, int], int], intbitset] = m_counters._features_by_bvalue_on_ext_state
+            #features_by_change_on_ext_state: Dict[Tuple[Tuple[int, int], str], intbitset] = m_counters._features_by_change_on_ext_state
+            #usable_features: intbitset = m_counters._relevant_features_idxs
+            features_by_bvalue_on_ext_state: Dict[Tuple[Tuple[int, int], int], intbitset] = watched_rules._features_by_bvalue_on_ext_state
+            features_by_change_on_ext_state: Dict[Tuple[Tuple[int, int], str], intbitset] = watched_rules._features_by_change_on_ext_state
+            usable_features: intbitset = watched_rules._relevant_features_idxs
             pruned_relevant_features: List[Tuple[int, Feature]] = relevant_features
 
         # Requirements for good transitions
@@ -819,30 +823,37 @@ class TerminationBasedLearnerReduced:
 
         # Calculate features that separate sibling edges (if applicable)
         ext_sibling_to_separating_features: Dict[Tuple[int, int, Tuple[int, int]], intbitset] = dict()
-        if separate_siblings:
-            raise RuntimeError("Option 'separate siblings' not yet implemented")
+        ext_successors: Dict[Tuple[int, int], List[Tuple[str, int]]] = defaultdict(list)
+        if separate_siblings or rule_elimination:
+            if separate_siblings: raise RuntimeError("Option 'separate siblings' not yet implemented")
             for ext_edge in self._iteration_ext_edges:
                 instance_idx, (src_state_idx, dst_state_idx) = ext_edge
                 ext_state: Tuple[int, int] = (instance_idx, src_state_idx)
                 instance_data: PDDLInstance = self._instance_datas[instance_idx]
-                src_feature_values: np.ndarray = self._iteration_ext_state_to_feature_valuations.get((instance_idx, src_state_idx))
-                features_by_change_on_ext_edge: List[List[intbitset]] = [features_by_change_on_ext_state.get((ext_state, change), intbitset()) for change in ["dec", "inc", "eqv"]]
-
                 successors: List[Tuple[Tuple[int, Any], str]] = instance_data.get_successors(src_state_idx)
 
-                # Skip this transition if it is a mark/move-mark transition
-                action_for_ext_edge = [action for (succ_state_idx, succ_state), action in successors if succ_state_idx == dst_state_idx][0]
-                if action_for_ext_edge.startswith("mark-") or action_for_ext_edge.startswith("move-mark-"): continue
+                if rule_elimination:
+                    # Store successor information
+                    for (succ_state_idx, succ_state), action in successors:
+                        ext_successors[ext_state].append((action, succ_state_idx))
 
-                for succ_state_idx in [succ_state_idx for (succ_state_idx, succ_state), action in successors if succ_state_idx != dst_state_idx]:
-                    sibling_feature_values: np.ndarray = self._iteration_ext_state_to_feature_valuations.get((instance_idx, succ_state_idx))
-                    feature_changes_on_sibling_ext_edge: Dict[str, intbitset] = self._get_effects_on_features(src_feature_values, sibling_feature_values, relevant_features_idxs)
-                    features_by_change_on_sibling_ext_edge: List[intbitset] = [feature_changes_on_sibling_ext_edge.get(change) for change in ["dec", "inc", "eqv"]]
-                    requirement: intbitset = intbitset().union(*[features_by_change_on_ext_edge[i] - features_by_change_on_sibling_ext_edge[i] for i in [0, 1, 2]])
-                    ext_sibling: Tuple[int, int, Tuple[int, int]] = (instance_idx, src_state_idx, (dst_state_idx, succ_state_idx))
-                    assert ext_sibling not in ext_sibling_to_separating_features
-                    ext_sibling_to_separating_features[ext_sibling] = requirement
-                    logging.debug(f"Sibling: ext_sibling={ext_sibling}, requirement={requirement}")
+                elif separate_siblings:
+                    src_feature_values: np.ndarray = self._iteration_ext_state_to_feature_valuations.get((instance_idx, src_state_idx))
+                    features_by_change_on_ext_edge: List[List[intbitset]] = [features_by_change_on_ext_state.get((ext_state, change), intbitset()) for change in ["dec", "inc", "eqv"]]
+
+                    # Skip this transition if it is a mark/move-mark transition (this is for indexicals)
+                    #action_for_ext_edge = [action for (succ_state_idx, succ_state), action in successors if succ_state_idx == dst_state_idx][0]
+                    #if action_for_ext_edge.startswith("mark-") or action_for_ext_edge.startswith("move-mark-"): continue
+
+                    for succ_state_idx in [succ_state_idx for (succ_state_idx, succ_state), action in successors if succ_state_idx != dst_state_idx]:
+                        sibling_feature_values: np.ndarray = self._iteration_ext_state_to_feature_valuations.get((instance_idx, succ_state_idx))
+                        feature_changes_on_sibling_ext_edge: Dict[str, intbitset] = self._get_effects_on_features(src_feature_values, sibling_feature_values, relevant_features_idxs)
+                        features_by_change_on_sibling_ext_edge: List[intbitset] = [feature_changes_on_sibling_ext_edge.get(change) for change in ["dec", "inc", "eqv"]]
+                        requirement: intbitset = intbitset().union(*[features_by_change_on_ext_edge[i] - features_by_change_on_sibling_ext_edge[i] for i in [0, 1, 2]])
+                        ext_sibling: Tuple[int, int, Tuple[int, int]] = (instance_idx, src_state_idx, (dst_state_idx, succ_state_idx))
+                        assert ext_sibling not in ext_sibling_to_separating_features
+                        ext_sibling_to_separating_features[ext_sibling] = requirement
+                        logging.debug(f"Sibling: ext_sibling={ext_sibling}, requirement={requirement}")
 
         return {
             "relevant_features": pruned_relevant_features,
@@ -862,6 +873,7 @@ class TerminationBasedLearnerReduced:
             "m_counters": m_counters,
             "watched_rules": watched_rules,
             "ex_ext_states": self._iteration_ex_ext_states,
+            "ext_successors": ext_successors,
             #"facts": {
             #    "monotone": set([ASPSolver.make_fact("monotone", f_idx) for f_idx in monotone_features]),
             #    "changing_features": set([ASPSolver.make_fact("changed", self._get_global_state_index_from_ext_state(ext_state), f_idx) for ext_state, f_idxs in requirements_for_good_transitions.items() for f_idx in f_idxs]),
