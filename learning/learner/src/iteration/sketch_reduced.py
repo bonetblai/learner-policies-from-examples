@@ -101,6 +101,9 @@ class SketchReduced:
                 logging.root.setLevel(logging_level)
                 return False, None, {"deadend": tuple([(instance_data.idx, state_idx) for state_idx in state_idx_path])}
 
+            # Number rules whose conditions are satisfied at current state
+            num_consistent_conditions = len(self.dlplan_policy.evaluate_conditions(root_dlplan_state))
+
             # Expand state
             timers["expansion"].resume()
             expanded += 1
@@ -132,6 +135,10 @@ class SketchReduced:
                     if randomized_sketch_test is not None and num_alive_successors >= randomized_sketch_test:
                         break
             timers["expansion"].stop()
+
+            # Check closednedd
+            if num_consistent_conditions > 0 and num_alive_successors == 0:
+                logging.info(f"Sketch isn't CLOSED: #successors={len(successors)}, #consistent_conditions={num_consistent_conditions}, #compatible_successors=0")
 
             # If no successors, this is a deadend state. It may fail above check as deadend check may be incomplete
             if len(successors) == 0:
