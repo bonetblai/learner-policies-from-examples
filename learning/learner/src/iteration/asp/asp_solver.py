@@ -3,7 +3,7 @@ from termcolor import colored
 from typing import Set, Tuple, List, Union, Dict, Any, Optional, Union, Deque
 from pathlib import Path
 
-from clingo import Control, Number, Symbol, String, Function
+from clingo import Control, Number, Symbol, String, Function, SymbolType
 from .returncodes import ClingoExitCode
 from ...util import write_file_lines
 
@@ -30,9 +30,9 @@ class ASPSolver:
     def __init__(self, arguments: List[str] = None, fact_signatures: List[Tuple[Any]] = None, loads: List[str] = None):
         ctl_arguments = [] if arguments is None else arguments
         self._ctl = Control(arguments=[] if arguments is None else arguments)
-        for fact_signature in fact_signatures:
+        for fact_signature in fact_signatures or []:
             self._ctl.add(*fact_signature)
-        for load in loads:
+        for load in loads or []:
             self._ctl.load(load)
 
     @staticmethod
@@ -50,9 +50,10 @@ class ASPSolver:
         logging.info(f"Grounding logic program with {len(facts)} fact(s)...")
         self._ctl.ground(facts + [("base", [])])
         if dump_asp_program:
+            def quote(s): return f'"{s}"'
             logging.info(f"Dumping logic proram to '{Path(os.getcwd()) / 'program.lp'}'...")
-            write_file_lines("program.lp", [f"{fact[0]}({','.join([str(arg.number) for arg in fact[1]])}).\n" for fact in facts])
-            #for line in [f"{fact[0]}({','.join([str(arg.number) for arg in fact[1]])})." for fact in facts]: print(line)
+            write_file_lines("program.lp", [f"{fact[0]}({','.join([str(arg.number) if arg.type.name == 'Number' else quote(arg.string) for arg in fact[1]])}).\n" for fact in facts])
+            #for line in [f"{fact[0]}({','.join([str(arg.number) if arg.type.name == 'Number' else quote(arg.string) for arg in fact[1]])})." for fact in facts]: print(line)
 
     def optimize_model(self,
                        max_models: int = 0,
