@@ -31,7 +31,6 @@ LIST_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
 from .m_pairs import MPairs
 from .m_pairs_contextual import MPairsContextual
-#from .m_counters import MCounters
 from .watched_rules import WatchedRules
 
 from .greedy_solver import GreedySolver
@@ -724,15 +723,11 @@ class TerminationBasedLearnerReduced:
         lazy: bool = False
         if not contextual and not rule_elimination:
             m_pairs: MPairs = MPairs(ds, monotone_only_by_dec=monotone_only_by_dec, lazy=lazy, timers=self._timers)
-            m_counters = None
         elif contextual:
             m_pairs: MPairsContextual = MPairsContextual(ds, monotone_only_by_dec=monotone_only_by_dec, lazy=lazy, timers=self._timers)
-            m_counters = None
         elif rule_elimination:
             # Calculate monotonicity counters
             m_pairs = None
-            m_counters = None
-            #m_counters: MCounters = MCounters(ds, monotone_only_by_dec=monotone_only_by_dec, timers=self._timers)
             watched_rules: WatchedRules = WatchedRules(ds, monotone_only_by_dec=monotone_only_by_dec, timers=self._timers)
 
         if not rule_elimination:
@@ -753,9 +748,6 @@ class TerminationBasedLearnerReduced:
                 logging.info(f"{len(pruned_relevant_features)} feature(s) after removing non-terminating features (num_pruned={len(relevant_features) - len(pruned_relevant_features)})")
                 logging.info(f"{len(monotone_features)} monotone feature(s)")
         else:
-            #features_by_bvalue_on_ext_state: Dict[Tuple[Tuple[int, int], int], intbitset] = m_counters._features_by_bvalue_on_ext_state
-            #features_by_change_on_ext_state: Dict[Tuple[Tuple[int, int], str], intbitset] = m_counters._features_by_change_on_ext_state
-            #usable_features: intbitset = m_counters._relevant_features_idxs
             features_by_bvalue_on_ext_state: Dict[Tuple[Tuple[int, int], int], intbitset] = watched_rules._features_by_bvalue_on_ext_state
             features_by_change_on_ext_state: Dict[Tuple[Tuple[int, int], str], intbitset] = watched_rules._features_by_change_on_ext_state
             usable_features: intbitset = watched_rules._relevant_features_idxs
@@ -870,7 +862,6 @@ class TerminationBasedLearnerReduced:
             "bad_ext_edges": bad_ext_edges,
             "ext_sibling_to_separating_features": ext_sibling_to_separating_features,
             "m_pairs": m_pairs,
-            "m_counters": m_counters,
             "watched_rules": watched_rules,
             "ex_ext_states": self._iteration_ex_ext_states,
             "ext_successors": ext_successors,

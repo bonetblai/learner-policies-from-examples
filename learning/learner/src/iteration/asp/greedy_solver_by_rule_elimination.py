@@ -19,7 +19,6 @@ from ..feature_pool import Feature
 from ...util import Timer
 from ...state_space import StateFactory
 
-#from .m_counters import MCounters
 from .watched_rules import WatchedRules
 from .asp_solver import ASPSolver
 #from .stratified_policy import StratifiedPolicy, StratifiedPolicyByRules
@@ -50,7 +49,6 @@ class GreedySolverByRuleElimination:
         self._ext_state_to_ext_edge: Dict[Tuple[int, int], Tuple[int, Tuple[int, int]]] = self._preprocessing_data.get("ext_state_to_ext_edge")
 
         # Monotone features calculated via watched rules
-        #self._m_counters: MCounters = self._preprocessing_data.get("m_counters")
         self._watched_rules: WatchedRules = self._preprocessing_data.get("watched_rules")
 
         # Calculate numerical features
@@ -78,7 +76,6 @@ class GreedySolverByRuleElimination:
     def _partition_r_idxs_with_f_idx(self, r_idxs: intbitset, f_idx: int) -> Dict[Tuple[Tuple[int, int]], intbitset]:
         partition: Dict[Tuple[Tuple[int, int]], intbitset] = defaultdict(intbitset)
         for r_idx in r_idxs:
-            #projection: Tuple[Tuple[int, int]] = self._m_counters.project_condition(r_idx, f_idx, single=True)
             projection: Tuple[Tuple[int, int]] = self._watched_rules.project_condition(r_idx, f_idx, single=True)
             partition[projection].add(r_idx)
         return partition
@@ -86,14 +83,11 @@ class GreedySolverByRuleElimination:
     def _score_fn(self, f_idx: int, chosen: intbitset) -> Tuple[Union[int, float]]:
         feature_index: int = self._f_idx_to_feature_index[f_idx]
         feature_complexity: int = self._relevant_features[feature_index][1].complexity
-        #r_idxs_to_remove: intbitset = intbitset([r_idx for r_idx in self._m_counters.r_idxs() if f_idx in self._m_counters.f_idxs_changed(r_idx)])
-        #partition: Dict[Tuple[Tuple[int, int]], intbitset] = self._partition_r_idxs_with_f_idx(self._m_counters.r_idxs(), f_idx)
         r_idxs_to_remove: intbitset = intbitset([r_idx for r_idx in self._watched_rules.r_idxs() if f_idx in self._watched_rules.f_idxs_changed(r_idx)])
         partition: Dict[Tuple[Tuple[int, int]], intbitset] = self._partition_r_idxs_with_f_idx(self._watched_rules.r_idxs(), f_idx)
         block_sizes: List[int] = [len(block - r_idxs_to_remove) for _, block in partition.items() if len(block - r_idxs_to_remove) > 0]
         num_blocks: int = len(block_sizes)
         std_block_sizes: float = -np.std(block_sizes) if num_blocks > 0 else 0
-        #monotone_by_dec: int = 1 if self._m_counters.is_monotone(f_idx, monotone_only_by_dec=True) else 0
         monotone_by_dec: int = 1 if self._watched_rules.is_monotone(f_idx, monotone_only_by_dec=True) else 0
         return (monotone_by_dec, len(r_idxs_to_remove) / feature_complexity, 1 if f_idx in chosen else 0, num_blocks, std_block_sizes)
 
@@ -330,7 +324,6 @@ class GreedySolverByRuleElimination:
         for annotation, requirement in self._annotated_requirements:
             if annotation["key"] == "Deadend":
                 ext_state: Tuple[int, int] = annotation["ext_state"]
-                #r_idx: int = self._m_counters.get_r_idx(ext_state)
                 r_idx: int = self._watched_rules.get_r_idx(ext_state)
                 assert r_idx is not None
                 necessary_f_idxs: intbitset = requirement & solution
@@ -344,7 +337,6 @@ class GreedySolverByRuleElimination:
         decorations: Dict[str, Dict[int, Dict[int, intbitset]]] = {"dont_care": defaultdict(lambda: defaultdict(intbitset)), "unknown": defaultdict(lambda: defaultdict(intbitset))}
         for r_idx, (f_idx, above) in r_idx_to_info.items():
             singleton: intbitset = intbitset([f_idx])
-            #instance_idx, state_idx = self._m_counters.get_ext_state(r_idx)
             instance_idx, state_idx = self._watched_rules.get_ext_state(r_idx)
             assert instance_idx not in decorations["unknown"] or state_idx not in decorations["unknown"][instance_idx]
             assert instance_idx not in decorations["dont_care"] or state_idx not in decorations["dont_care"][instance_idx]
@@ -365,7 +357,6 @@ class GreedySolverByRuleElimination:
     # Solver calls recursive solve
     def solve(self, **kwargs) -> Any:
         # Calculate features that make "eliminate" all rules
-        #self._m_counters.reset()
         self._watched_rules.reset()
         r_idx_to_info: Dict[int, Tuple[int, intbitset]] = dict()
         terminating_set, branches = self._rec_solve([], intbitset(), intbitset(), r_idx_to_info, **kwargs)
@@ -399,12 +390,10 @@ class GreedySolverByRuleElimination:
         indent_str: str = '   ' * len(branch)
 
         # Base case: if no remaining rules, empty set of features is solution
-        #r_idxs: intbitset = self._m_counters.r_idxs()
         r_idxs: intbitset = self._watched_rules.r_idxs()
         if len(r_idxs) == 0: return intbitset(), dict()
 
         # Get eligible features sorted by score, removing features that do not eliminate any rule (i.e., with zero score in corresponding component)
-        #eligible_features: intbitset = self._m_counters.monotone_features(kwargs.get("monotone_only_by_dec", False))
         eligible_features: intbitset = self._watched_rules.monotone_features(kwargs.get("monotone_only_by_dec", False))
         logging.info(f"[_rec_solve]:{indent_str} => chosen={list(chosen)}, r_idxs={list(r_idxs)}, {len(eligible_features)} mononote feature(s)")
         eligible_features_with_score: List[Tuple[int, Tuple[float]]] = [(f_idx, self._score_fn(f_idx, chosen)) for f_idx in eligible_features]
@@ -415,7 +404,6 @@ class GreedySolverByRuleElimination:
         if len(sorted_eligible_features) == 0:
             logging.warning(f"No monotone feature to eliminate rules: r_idxs={sorted(r_idxs)}")
             for r_idx in r_idxs:
-                #ext_state: Tuple[int, int] = self._m_counters.get_ext_state(r_idx)
                 ext_state: Tuple[int, int] = self._watched_rules.get_ext_state(r_idx)
                 ext_edge: Tuple[int, Tuple[int, int]] = self._ext_state_to_ext_edge.get(ext_state)
                 src_dlplan_state: dlplan_core.State = self._state_factory.get_dlplan_state(ext_edge[0], ext_edge[1][0])
@@ -436,7 +424,6 @@ class GreedySolverByRuleElimination:
         best_f_idx: int = random.choice(best_f_idxs)
         best_score: Tuple[float] = self._score_fn(best_f_idx, chosen)
         complexity: int = self._relevant_features[self._f_idx_to_feature_index[best_f_idx]][1].complexity
-        #r_idxs_to_remove: intbitset = intbitset([r_idx for r_idx in r_idxs if best_f_idx in self._m_counters.f_idxs_changed(r_idx)])
         r_idxs_to_remove: intbitset = intbitset([r_idx for r_idx in r_idxs if best_f_idx in self._watched_rules.f_idxs_changed(r_idx)])
         partition: Dict[Tuple[Tuple[int, int]], intbitset] = self._partition_r_idxs_with_f_idx(r_idxs, best_f_idx)
         logging.info(f"[_rec_solve]:{indent_str}    f{best_f_idx}.{self._relevant_features[self._f_idx_to_feature_index[best_f_idx]][1]._dlplan_feature}/{complexity}, score={best_score}, r_idxs_to_remove={r_idxs_to_remove}, partition={[len(block - r_idxs_to_remove) for block in partition.values()]}")
@@ -449,7 +436,6 @@ class GreedySolverByRuleElimination:
 
         # Remove rules that change chosen feature
         for r_idx in r_idxs_to_remove:
-            #self._m_counters.remove_rule(r_idx)
             self._watched_rules.remove_rule(r_idx)
 
         # Recursion on each partition block
@@ -459,7 +445,6 @@ class GreedySolverByRuleElimination:
             # Remove r_idxs not in partition block before recursive call
             r_idxs_not_in_block: intbitset = r_idxs - block
             for r_idx in r_idxs_not_in_block:
-                #self._m_counters.remove_rule(r_idx)
                 self._watched_rules.remove_rule(r_idx)
 
             # Recursive call
@@ -469,12 +454,10 @@ class GreedySolverByRuleElimination:
 
             # Restore r_idxs not in partition block after recursive call
             for r_idx in r_idxs_not_in_block:
-                #self._m_counters.add_rule(r_idx)
                 self._watched_rules.restore_rule(r_idx)
 
         # Restore r_idxs that change best f_idx
         for r_idx in r_idxs_to_remove:
-            #self._m_counters.add_rule(r_idx)
             self._watched_rules.restore_rule(r_idx)
 
         logging.info(f"[_rec_solve]:{indent_str} solution={list(solution)}, branches={branches}")
@@ -494,7 +477,6 @@ class GreedySolverByRuleElimination:
                 for annotation, requirement in [self._annotated_requirements[i] for i in pending_requirements]:
                     if annotation["key"] == "Edge":
                         ext_state: Tuple[int, int] = annotation["ext_state"]
-                        #r_idx: int = self._m_counters.get_r_idx(ext_state)
                         r_idx: int = self._watched_rules.get_r_idx(ext_state)
                         logging.info(f"  Unexpected pending requirement: key='Edge', ext_state={ext_state}, r_idx={r_idx}")
                         logging.info(f"    This should have detected during rule elimination by _rec_solve")
