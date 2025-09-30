@@ -135,8 +135,9 @@ class WatchedRules:
     def get_ext_state(self, r_idx: int) -> Tuple[int, int]:
         return self._rule_index_to_ext_state[r_idx]
 
-    def is_monotone(self, f_idx: int, monotone_only_by_dec: bool = False) -> bool:
+    def is_monotone(self, f_idx: int, monotone_only_by_dec: bool = None) -> bool:
         # f_idx is monotone iff no rule main increase f_idx, or no rule may decrease it AND (NOT monotone_only_by_dec OR f_idx is Boolean)
+        monotone_only_by_dec: bool = monotone_only_by_dec or self._monotone_only_by_dec
         feature_idx: int = self._f_idx_to_feature_idx.get(f_idx)
         watched_rules: List[int, int] = self._feature_idx_to_watched_rules[feature_idx]
         if watched_rules[1] is None:
@@ -146,7 +147,8 @@ class WatchedRules:
         else:
             return False
 
-    def monotone_features(self, monotone_only_by_dec: bool = False) -> intbitset:
+    def monotone_features(self, monotone_only_by_dec: bool = None) -> intbitset:
+        monotone_only_by_dec: bool = monotone_only_by_dec or self._monotone_only_by_dec
         return intbitset([f_idx for f_idx in self._relevant_features_idxs if self.is_monotone(f_idx, monotone_only_by_dec=monotone_only_by_dec)])
 
     def f_idxs_changed(self, r_idx: int) -> intbitset:
