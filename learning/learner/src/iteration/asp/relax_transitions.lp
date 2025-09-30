@@ -1,6 +1,7 @@
 % ==== Input ====
 
-#defined feature/1.      % feature(F).
+#defined feature/1.      % feature(F).      [F is feature]
+#defined boolean/1.      % boolean(F).      [F is boolean feature]
 #defined good/1.         % good(G).         [G is good transition (example)]
 #defined bad/1.          % bad(B).          [B is bad transition]
 #defined other/1.        % other(X).        [X is non-bad transition]
@@ -38,8 +39,10 @@ effect(G, F, 1)               :- fixed(G, F).
 eq(G, G)  :- good(G).
 eq(G, G2) :- good(G), good(G2), G < G2,
              condition(G2, F, D) : condition(G, F, D);
-             source(G2, F, V) : condition(G, F, 1), source(G, F, V);
+             condition(G, F, D) : condition(G2, F, D);
              effect(G2, F, D) : effect(G, F, D);
+             effect(G, F, D) : effect(G2, F, D);
+             source(G2, F, V) : condition(G, F, 1), source(G, F, V);
              change(G2, F, C) : effect(G, F, 1), change(G, F, C).
 
 class(G)  :- good(G), not eq(G2, G) : good(G2), G2 < G.
@@ -52,9 +55,19 @@ consistent(G, B) :- good(G),        bad(B),  source(B, F, V) : feature(F), condi
 consistent(G, T) :- good(G), transition(T),  source(T, F, V) : feature(F), condition(G, F, 1), source(G, F, V).
 
 % Good transition G is COMPATIBLE with transition/sibling X if features affected by G change in X according to G (non-symmetric relation)
-compatible(G, B) :- good(G),     bad(B), change(B, F, C) : feature(F), effect(G, F, 1), change(G, F, C).
-compatible(G, S) :- good(G), sibling(S), change(S, F, C) : feature(F), effect(G, F, 1), change(G, F, C).
+%compatible(G, B) :- good(G),     bad(B), change(B, F, C) : feature(F), effect(G, F, 1), change(G, F, C).
+%compatible(G, S) :- good(G), sibling(S), change(S, F, C) : feature(F), effect(G, F, 1), change(G, F, C).
+
+compatible(G, B) :- good(G),     bad(B), compatible(G, B, F) : feature(F), effect(G, F, 1).
+compatible(G, S) :- good(G), sibling(S), compatible(G, S, F) : feature(F), effect(G, F, 1).
 sibling(S)       :- good(G), sibling(G, S).
+
+compatible(G, B, F) :- good(G),     bad(B), feature(F), effect(G, F, 1), change(G, F, C), change(B, F, C).
+compatible(G, B, F) :- good(G),     bad(B), boolean(F), effect(G, F, 1), change(G, F, "inc"), change(B, F, "eqv"), source(B, F, 1).
+compatible(G, B, F) :- good(G),     bad(B), boolean(F), effect(G, F, 1), change(G, F, "dec"), change(B, F, "eqv"), source(B, F, 0).
+compatible(G, S, F) :- good(G), sibling(S), feature(F), effect(G, F, 1), change(G, F, C), change(S, F, C).
+compatible(G, S, F) :- good(G), sibling(S), boolean(F), effect(G, F, 1), change(G, F, "inc"), change(S, F, "eqv"), source(S, F, 1).
+compatible(G, S, F) :- good(G), sibling(S), boolean(F), effect(G, F, 1), change(G, F, "dec"), change(S, F, "eqv"), source(S, F, 0).
 
 
 % ==== Safeness ====
@@ -107,7 +120,7 @@ triggers(G, Y)    :- good(G), yield(Y), value(Y, F, V) : feature(F), condition(G
 
 % Hard optimization (SAT)
 
-:- good(T), not safe(T).
+:- good(G), not safe(G).
 
 % Soft optimization
 
@@ -129,8 +142,4 @@ triggers(G, Y)    :- good(G), yield(Y), value(Y, F, V) : feature(F), condition(G
 #show nonsafe(G)         : class(G), not safe(G).
 #show noncovered(Y)      : yield(Y), active(Y), not covered(Y).
 #show nonactive(Y)       : yield(Y), not active(Y).
-
-#show sibling/2.
-#show consistent(G, T)   : consistent(G, T), G = 0.
-#show transition/1.
 

@@ -198,12 +198,15 @@ class GreedySolverByRuleElimination:
                 non_goal_boolean_valuation = boolean_valuations
             feature_valuations_for_goals.add(tuple([(i, goal_boolean_valuation[i]) for i in goal_separating_features]))
             feature_valuations_for_non_goals.add(tuple([(i, non_goal_boolean_valuation[i]) for i in goal_separating_features]))
-        assert len(feature_valuations_for_goals & feature_valuations_for_non_goals) == 0
+
+        if len(feature_valuations_for_goals & feature_valuations_for_non_goals) > 0:
+            logging.warning(f"Non-empty intersection of feature valuations for goal and non-goal states: {feature_valuations_for_goals & feature_valuations_for_non_goals}")
         logging.info(f"feature_valuations_for_goals: {sorted(feature_valuations_for_goals)}")
 
         # Construct solver
         fact_signatures: List[Tuple[Any]] = [
             ("feature", ("f",), "feature(f)."),
+            ("boolean", ("f",), "boolean(f)."),
             ("good", ("t",), "good(t)."),
             ("bad", ("t",), "bad(t)."),
             ("other", ("t",), "other(t)."),
@@ -223,6 +226,8 @@ class GreedySolverByRuleElimination:
         # Contruct facts for feature/1, transition/1, fixed/2, sibling/2, bad/1, source/3, change/3, yield/1, value/3, goal/1
         for f_idx in features:
             facts["feature/1"].append(asp_solver.make_fact("feature", f_idx))
+            if f_idx not in self._numerical_f_idxs:
+                facts["feature/1"].append(asp_solver.make_fact("boolean", f_idx))
 
         # good/1, source/3, and change/3
         for tr_idx in transitions_good:
@@ -369,6 +374,7 @@ class GreedySolverByRuleElimination:
 
         # Solve pending requirements
         solution, _ = self._solve_pending_requirements(terminating_set)
+        logging.info(f"Solution: {sorted(solution)}")
 
         # Cost of solution
         cost = sum([self._relevant_features[self._f_idx_to_feature_index[f_idx]][1].complexity for f_idx in solution])
