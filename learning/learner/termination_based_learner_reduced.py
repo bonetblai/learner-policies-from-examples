@@ -118,7 +118,7 @@ def _advance_selected_idxs(selected_idxs: List[int],
         #        1. Learned policy "passes" verification over learning instances.
         #        2. Verification over all instances goes again over learning instances.
         #        3. Second time, over learning instances, verification fails because it reaches a state not seen before.
-        assert next_instance_idx not in selected_idxs
+        assert next_instance_idx not in selected_idxs, "See CHECK note in source file"
         next_instance_idxs = selected_idxs + [next_instance_idx]
 
     logging.info(f"ADVANCING to TRAINING instances: {next_instance_idxs}")

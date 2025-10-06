@@ -31,12 +31,13 @@ LIST_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
 from .m_pairs import MPairs
 from .m_pairs_contextual import MPairsContextual
-from .watched_rules import WatchedRules
+from .rule_viewer import RuleViewer
 
 from .greedy_solver import GreedySolver
 from .greedy_solver_contextual import GreedySolverContextual
 from .greedy_solver_contextual_alt import GreedySolverContextualAlt
 from .greedy_solver_by_rule_elimination import GreedySolverByRuleElimination
+from .solution_generator import SolutionGenerator
 
 
 class TerminationBasedLearnerReduced:
@@ -239,6 +240,21 @@ class TerminationBasedLearnerReduced:
         self._relevant_features: List[Tuple[int, Feature]] = self._preprocessing_data.get("relevant_features")
         self._f_idx_to_feature_index: Dict[int, int] = self._preprocessing_data.get("f_idx_to_feature_index")
         self._timers.stop("preprocessing")
+
+        """
+        # Enumerate solutions (TEST)
+        options_for_solution_generator: Dict[str, Any] = {
+            "simplify_policy": simplify_policy,
+            "simplify_only_conditions": simplify_only_conditions,
+            "monotone_only_by_dec": monotone_only_by_dec,
+            "dump_asp_program": dump_asp_program,
+        }
+        solution_generator: SolutionGenerator = SolutionGenerator(self._preprocessing_data, **options_for_solution_generator)
+        for solution, cost, decorations in solution_generator.solutions(**options_for_solution_generator):
+            logging.info(colored(f"{len(solution)} feature(s) in solution {sorted(solution)} of cost {cost}", "magenta", attrs=["bold"]))
+            logging.info(f"Decorations: {decorations}")
+        assert False
+        """
 
         # Greedy solver
         logging.info(f"INITIALIZING SOLVER...")
@@ -728,7 +744,7 @@ class TerminationBasedLearnerReduced:
         elif rule_elimination:
             # Calculate monotonicity counters
             m_pairs = None
-            watched_rules: WatchedRules = WatchedRules(ds, monotone_only_by_dec=monotone_only_by_dec, timers=self._timers)
+            viewer: RuleViewer = RuleViewer(ds, monotone_only_by_dec=monotone_only_by_dec, timers=self._timers)
 
         if not rule_elimination:
             features_by_bvalue_on_ext_state: Dict[Tuple[Tuple[int, int], int], intbitset] = m_pairs._features_by_bvalue_on_ext_state
@@ -748,9 +764,9 @@ class TerminationBasedLearnerReduced:
                 logging.info(f"{len(pruned_relevant_features)} feature(s) after removing non-terminating features (num_pruned={len(relevant_features) - len(pruned_relevant_features)})")
                 logging.info(f"{len(monotone_features)} monotone feature(s)")
         else:
-            features_by_bvalue_on_ext_state: Dict[Tuple[Tuple[int, int], int], intbitset] = watched_rules._features_by_bvalue_on_ext_state
-            features_by_change_on_ext_state: Dict[Tuple[Tuple[int, int], str], intbitset] = watched_rules._features_by_change_on_ext_state
-            usable_features: intbitset = watched_rules._relevant_features_idxs
+            features_by_bvalue_on_ext_state: Dict[Tuple[Tuple[int, int], int], intbitset] = viewer._features_by_bvalue_on_ext_state
+            features_by_change_on_ext_state: Dict[Tuple[Tuple[int, int], str], intbitset] = viewer._features_by_change_on_ext_state
+            usable_features: intbitset = viewer._relevant_features_idxs
             pruned_relevant_features: List[Tuple[int, Feature]] = relevant_features
 
         # Requirements for good transitions
@@ -862,7 +878,7 @@ class TerminationBasedLearnerReduced:
             "bad_ext_edges": bad_ext_edges,
             "ext_sibling_to_separating_features": ext_sibling_to_separating_features,
             "m_pairs": m_pairs,
-            "watched_rules": watched_rules,
+            "rule_viewer": viewer,
             "ex_ext_states": self._iteration_ex_ext_states,
             "ext_successors": ext_successors,
             #"facts": {
