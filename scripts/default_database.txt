@@ -130,5 +130,5 @@
     "logistics-indexicals-contextual": {"group": ["logistics-indexicals"], "xrefs": ["args3"]},
 
     # Rule-based elimination
-    "rule-elimination": {"group": ["standard"], "args": ["--rule_elimination", "--instance_selection forward+", "--simplify_policy"]},
+    "rule-elimination": {"group": ["standard"], "args": ["--rule_elimination", "--monotone_only_by_dec", "--simplify_policy"]},
 }
