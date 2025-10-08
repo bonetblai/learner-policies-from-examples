@@ -204,7 +204,7 @@ class RuleViewer:
                 self._r_idx_to_stalkers[r_idx][i].add(feature_idx)
                 self._dangling_features[i].remove(feature_idx)
 
-    def project_condition(self, r_idx: int, f_idxs: Union[intbitset, int], boolean: bool = True) -> Tuple[Tuple[int, int]]:
+    def project_condition(self, r_idx: int, f_idxs: Union[intbitset, int], boolean_projection: bool = True) -> Tuple[Tuple[int, int]]:
         ext_state: Tuple[int, int] = self._r_idx_to_ext_state[r_idx]
         feature_values: np.ndarray = self._ext_state_to_feature_valuations.get(ext_state)
 
@@ -213,7 +213,7 @@ class RuleViewer:
 
         projection: List[Tuple[int, int]] = []
         for f_idx in f_idxs:
-            if boolean:
+            if boolean_projection:
                 projection.append((f_idx, 1 if feature_values[f_idx] > 0 else 0))
             else:
                 projection.append((f_idx, feature_values[f_idx]))

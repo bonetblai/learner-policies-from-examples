@@ -95,6 +95,8 @@ class GreedySolverByRuleElimination:
         # TODO: Fix error for zenotravel3
         # TODO: Prefer numerical over boolean features
         # TODO: backtrack when failing to find a feature
+        logging.warning(colored("TODO: backtrack when failing to find a feature", "magenta", attrs=["bold"]))
+        #assert False
 
         # Calculate features that "eliminate" all rules with greedy solver
         r_idx_to_info: Dict[int, Tuple[int, intbitset]] = dict()

@@ -84,7 +84,6 @@ class PolicyFinalizer:
             transitions_r[ext_edge] = tr_idx
             transitions_good.add(tr_idx)
         num_transitions = len(transitions)
-        logging.info(f"{len(transitions_good)} good transition(s)")
 
         # Bad transitions
         for tr_idx, ext_edge in enumerate(list(self._bad_ext_edges)):
@@ -93,7 +92,7 @@ class PolicyFinalizer:
             transitions_r[ext_edge] = num_transitions + tr_idx
             transitions_bad.add(num_transitions + tr_idx)
         num_transitions = len(transitions)
-        logging.info(f"{len(transitions_bad)} bad transition(s)")
+        logging.info(f"{len(transitions_good)} good transition(s) and {len(transitions_bad)} bad transition(s)")
 
         # Siblings
         for tr_idx in transitions_good:
@@ -158,7 +157,7 @@ class PolicyFinalizer:
 
         if len(feature_valuations_for_goals & feature_valuations_for_non_goals) > 0:
             logging.warning(f"Non-empty intersection of feature valuations for goal and non-goal states: {feature_valuations_for_goals & feature_valuations_for_non_goals}")
-        logging.info(f"feature_valuations_for_goals: {sorted(feature_valuations_for_goals)}")
+        logging.debug(f"feature_valuations_for_goals: {sorted(feature_valuations_for_goals)}")
 
         # Construct solver
         fact_signatures: List[Tuple[Any]] = [
@@ -252,7 +251,7 @@ class PolicyFinalizer:
         asp_solver.ground(facts, dump_asp_program=False)
         symbols, cost, exit_code = asp_solver.optimize_model()
         local_timer.stop()
-        logging.info(f"{local_timer.get_elapsed_sec():.02f} second(s) for ASP solver")
+        logging.debug(f"{local_timer.get_elapsed_sec():.02f} second(s) for ASP solver")
 
         # Read symbols
         eqclass: intbitset = intbitset()
@@ -322,7 +321,7 @@ class PolicyFinalizer:
         solution: intbitset = intbitset(f_idxs)
         pending_requirements: List[int] = [i for i, requirement in enumerate(self._requirements) if len(requirement & solution) == 0]
         while len(pending_requirements) > 0:
-            logging.info(f"[_solve_pending_requirements] pending_requirements: {pending_requirements}")
+            logging.debug(f"[_solve_pending_requirements] pending_requirements: {pending_requirements}")
             eligible_features_with_score: List[Tuple[int, Tuple[float]]] = [(f_idx, self._score_fn(f_idx, pending_requirements)) for f_idx, _ in self._relevant_features if f_idx not in solution]
             eligible_features_with_non_zero_score: List[Tuple[int, Tuple[float]]] = [(f_idx, score) for f_idx, score in eligible_features_with_score if score[0] > 0]
             sorted_eligible_features: List[Tuple[int, Tuple[float]]] = sorted(eligible_features_with_non_zero_score, key=lambda item: item[1], reverse=True)
