@@ -30,12 +30,9 @@ from ...state_space import PDDLInstance, StateFactory, get_plan, get_plan_v2
 LIST_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
 from .m_pairs import MPairs
-from .m_pairs_contextual import MPairsContextual
 from .rule_viewer import RuleViewer
 
 from .greedy_solver import GreedySolver
-from .greedy_solver_contextual import GreedySolverContextual
-from .greedy_solver_contextual_alt import GreedySolverContextualAlt
 from .greedy_solver_by_rule_elimination import GreedySolverByRuleElimination
 from .solution_generator import SolutionGenerator
 
@@ -45,18 +42,16 @@ class TerminationBasedLearnerReduced:
                  state_factory: StateFactory,
                  disable_greedy_solver: bool = False,
                  disable_optimization_decorations: bool = False,
-                 solver_prefix: Optional[str] = None,
                  timers: Optional[Statistics] = None,
                  **kwargs):
         self._state_factory: StateFactory = state_factory
         self._disable_greedy_solver = disable_greedy_solver
         self._disable_optimization_decorations = disable_optimization_decorations
-        self._solver_prefix = solver_prefix
         self._using_tarski = state_factory.using_tarski()
         self._instance_datas: List[PDDLInstance] = state_factory._instances
         self._preprocessed_datas: List[Dict[str, Any]] = None
         self._timers = timers if timers is not None else Statistics()
-        assert solver_prefix == "termination9"
+        self._options: Dict[str, Any] = kwargs
 
         # Stores edges for ext_states found by planner to avoid calling planning multiple times from same state
         self._ext_state_to_ext_edge: Dict[Tuple[int, int], Tuple[int, Tuple[int, int]]] = dict()
@@ -127,10 +122,6 @@ class TerminationBasedLearnerReduced:
                     # If plan visit the same state twice, we should remove it.
                     # However, we don't have the trajectory here...
                     idxs_to_be_removed.append(instance_idx)
-
-        # State maps for creation of facts
-        self._ext_state_to_global_state_index: Dict[Tuple[int, int], int] = dict()
-        self._global_state_index_to_ext_state: Dict[int, Tuple[int, int]] = dict()
 
         self._timers.stop("preprocessing")
         self._timers.stop("planner")
@@ -205,16 +196,12 @@ class TerminationBasedLearnerReduced:
             timeout_in_seconds = 60 * timeout_in_seconds_per_step
         simplify_policy: bool = kwargs.get("simplify_policy", False)
         simplify_only_conditions: bool = kwargs.get("simplify_only_conditions", False)
-        separate_siblings: bool = kwargs.get("separate_siblings", False)
-        contextual: bool = kwargs.get("contextual", False)
         rule_elimination: bool = kwargs.get("rule_elimination", False)
         monotone_only_by_dec: bool = kwargs.get("monotone_only_by_dec", False)
         uniform_costs: bool = kwargs.get("uniform_costs", False)
         verbose: bool = kwargs.get("verbose", False)
         dump_asp_program: bool = kwargs.get("dump_asp_program", False)
         previous_feature_rank: int = kwargs.get("previous_feature_rank")
-
-        assert not contextual or not rule_elimination
 
         # Print paths
         for instance_idx, path in self._iteration_paths_with_idxs:
@@ -232,29 +219,12 @@ class TerminationBasedLearnerReduced:
         self._timers.resume("preprocessing")
         preprocess_options: Dict[str, Any] = {
             "monotone_only_by_dec": monotone_only_by_dec,
-            "separate_siblings": separate_siblings,
-            "contextual": contextual,
             "rule_elimination": rule_elimination,
         }
         self._preprocessing_data: Dict[str, Any] = self._preprocess_termination(**preprocess_options)
         self._relevant_features: List[Tuple[int, Feature]] = self._preprocessing_data.get("relevant_features")
         self._f_idx_to_feature_index: Dict[int, int] = self._preprocessing_data.get("f_idx_to_feature_index")
         self._timers.stop("preprocessing")
-
-        """
-        # Enumerate solutions (TEST)
-        options_for_solution_generator: Dict[str, Any] = {
-            "simplify_policy": simplify_policy,
-            "simplify_only_conditions": simplify_only_conditions,
-            "monotone_only_by_dec": monotone_only_by_dec,
-            "dump_asp_program": dump_asp_program,
-        }
-        solution_generator: SolutionGenerator = SolutionGenerator(self._preprocessing_data, **options_for_solution_generator)
-        for solution, cost, decorations in solution_generator.solutions(**options_for_solution_generator):
-            logging.info(colored(f"{len(solution)} feature(s) in solution {sorted(solution)} of cost {cost}", "magenta", attrs=["bold"]))
-            logging.info(f"Decorations: {decorations}")
-        assert False
-        """
 
         # Greedy solver
         logging.info(f"INITIALIZING SOLVER...")
@@ -267,24 +237,15 @@ class TerminationBasedLearnerReduced:
             "verify_termination": False, #True,
             "optimality": False,
         }
-        if not contextual and not rule_elimination:
+        if not rule_elimination:
             greedy_solver: GreedySolver = GreedySolver(self._preprocessing_data, self._state_factory, **options_for_greedy_solver)
-        elif contextual:
-            #greedy_solver: GreedySolverContextual = GreedySolverContextual(self._preprocessing_data, self._state_factory, **options_for_greedy_solver)
-            greedy_solver: GreedySolverContextualAlt = GreedySolverContextualAlt(self._preprocessing_data, self._state_factory, **options_for_greedy_solver)
-        elif rule_elimination:
+        else:
             greedy_solver: GreedySolverByRuleElimination = GreedySolverByRuleElimination(self._preprocessing_data, self._state_factory, **options_for_greedy_solver)
         logging.info(f"DONE")
 
         self._timers.resume("pricing/algorithm")
         status, chosen, cost, decorations, feature_ranks = greedy_solver.solve(**options_for_greedy_solver)
         self._timers.stop("pricing/algorithm")
-
-        if options_for_greedy_solver.get("verify_termination", False):
-            terminates: bool = self._verify_termination(self._relevant_features, feature_ranks, self._f_idx_to_feature_index, self._solver_prefix, dump_asp_program)
-            if not terminates:
-                logging.error(colored(f"Solution {sorted(chosen)} does not pass termination test", "red"))
-                raise RuntimeError(f"Solution does not pass termination test")
 
         if status:
             # Construct solution as set of rules paired with unknowns and don't cares.
@@ -503,22 +464,6 @@ class TerminationBasedLearnerReduced:
             "ext_state_to_feature_valuations": self._iteration_ext_state_to_feature_valuations,
         }
 
-    def _calculate_ext_states_to_contexts(self,
-                                          usable_features: intbitset,
-                                          features_by_change_on_ext_state: Dict[Tuple[Tuple[int, int], str], intbitset]) -> Dict[Tuple[int, int], Set[Tuple[int, int]]]:
-        ext_states_to_contexts: Dict[Tuple[int, int], Set[Tuple[int, int]]] = defaultdict(set)
-        # Context for rule r (associated with ext-state) is singleton-valuation \nu = {g_idx <- bvalue} such that
-        # r belongs to \varrho(R, \nu) = { rules whose condition is consistent with \nu, and do not change g_idx }
-        for (ext_state, change), g_idxs in features_by_change_on_ext_state.items():
-            if change == "eqv":
-                feature_values: np.ndarray = self._iteration_ext_state_to_feature_valuations.get(ext_state)
-                for g_idx in g_idxs & usable_features:
-                    bvalue = 0 if feature_values[g_idx] == 0 else 1
-                    ext_states_to_contexts[ext_state].add((g_idx, bvalue))
-        for ext_state, contexts in ext_states_to_contexts.items():
-            logging.debug(f"CONTEXT: {ext_state} -> {len(contexts)} context(s)")
-        return ext_states_to_contexts
-
     def _calculate_requirements_for_good_transitions(self,
                                                      usable_features: intbitset,
                                                      features_by_change_on_ext_state: Dict[Tuple[Tuple[int, int], str], intbitset]) -> Any:
@@ -527,55 +472,6 @@ class TerminationBasedLearnerReduced:
             changing_features: intbitset = features_by_change_on_ext_state.get((ext_state, "dec"), intbitset()) | features_by_change_on_ext_state.get((ext_state, "inc"), intbitset())
             requirements_for_good_transitions[ext_state] = changing_features & usable_features
         return requirements_for_good_transitions
-
-    def _calculate_requirements_for_good_transitions_contextual(self,
-                                                                usable_features: intbitset,
-                                                                features_by_change_on_ext_state: Dict[Tuple[Tuple[int, int], str], intbitset],
-                                                                ext_states_to_contexts: Dict[Tuple[int, int], Set[Tuple[int, int]]],
-                                                                m_pairs: MPairsContextual) -> Any:
-        # For each rule r, there is pair (f, \nu) such that
-        # 1. f changes in r
-        # 2. f is monotone in R given \nu
-        # 3. f is monotone (i.e., \nu is empty) OR r belongs to \varrho(R, \nu)
-
-        nu_context_to_index: OrderedDict[Tuple[int, int], int] = OrderedDict()
-        fnu_pair_to_index: OrderedDict[Tuple[int, int], int] = OrderedDict()
-        fnu_idx_to_direction: List[str] = []
-        requirements_for_good_transitions: Dict[Tuple[int, int], intbitset] = defaultdict(intbitset)
-        for (ext_state, change), f_idxs in features_by_change_on_ext_state.items():
-            if change != "eqv":
-                monotone_f_idxs: intbitset = f_idxs & m_pairs.monotone_features()
-                assert monotone_f_idxs.issubset(usable_features)
-                non_monotone_f_idxs: intbitset = (f_idxs - monotone_f_idxs) & usable_features
-
-                # Empty contexts for monotone features that change in r
-                nu_idx: int = nu_context_to_index.setdefault((), len(nu_context_to_index))
-                for f_idx in monotone_f_idxs:
-                    fnu_idx: int = fnu_pair_to_index.setdefault((f_idx, nu_idx), len(fnu_pair_to_index))
-                    requirements_for_good_transitions[ext_state].add(fnu_idx)
-                    if fnu_idx >= len(fnu_idx_to_direction):
-                        fnu_idx_to_direction.append(change)
-
-                # Contexts (g_idx, bvalue) for conditional monotone features that change in r
-                contexts: Set[Tuple[int, int]] = ext_states_to_contexts.get(ext_state, [])
-                for g_idx, bvalue in contexts: # This is the context \nu = {g_idx <- bvalue} such that rule r belongs to \varrho(R, \nu)
-                    nu_idx: int = nu_context_to_index.setdefault((g_idx, bvalue), len(nu_context_to_index))
-                    monotone_given_nu_f_idxs: intbitset = non_monotone_f_idxs & m_pairs.f_idxs_for_g_idx(g_idx)[bvalue] # This is set of f_idx that change with r and are monotone given \nu
-                    for f_idx in monotone_given_nu_f_idxs:
-                        fnu_idx: int = fnu_pair_to_index.setdefault((f_idx, nu_idx), len(fnu_pair_to_index))
-                        requirements_for_good_transitions[ext_state].add(fnu_idx)
-                        if fnu_idx >= len(fnu_idx_to_direction):
-                            fnu_idx_to_direction.append(change)
-
-        # Complete requirements
-        uncovered_ext_states: Set[Tuple[int, int]] = self._iteration_ex_ext_states - set(requirements_for_good_transitions.keys())
-        for ext_state in uncovered_ext_states:
-            requirements_for_good_transitions[ext_state] = intbitset()
-
-        for ext_state, requirement in requirements_for_good_transitions.items():
-            logging.info(f"REQUIREMENT: {ext_state} -> {len(requirement)} fnu-pair(s)")
-
-        return requirements_for_good_transitions, nu_context_to_index, fnu_pair_to_index, fnu_idx_to_direction
 
     def _calculate_features_that_separate_ext_pairs(self,
                                                     instance_idx_to_ext_pairs: Dict[int, Tuple[int, int]],
@@ -711,13 +607,11 @@ class TerminationBasedLearnerReduced:
                 if len(requirement) == 0: return False, None, marked_ext_edges
         return True, ext_state_to_separating_features, marked_ext_edges
 
-    def _preprocess_termination(self, monotone_only_by_dec: bool = False, separate_siblings: bool = False, contextual: bool = False, rule_elimination: bool = False) -> Dict[str, Any]:
+    def _preprocess_termination(self, monotone_only_by_dec: bool = False, rule_elimination: bool = False) -> Dict[str, Any]:
         logging.info(f"Preprocessing termination of features...")
         local_timer: Timer = Timer()
         self._timers.resume("feature/termination")
         self._timers.resume("pricing/preprocessing")
-
-        assert not contextual or not rule_elimination
 
         # Define relevant edges: those in paths and those for off-path relevant vertices
         self._calculate_ext_states_and_edges()
@@ -737,11 +631,9 @@ class TerminationBasedLearnerReduced:
 
         # Calculate companions m_pairs
         lazy: bool = False
-        if not contextual and not rule_elimination:
+        if not rule_elimination:
             m_pairs: MPairs = MPairs(ds, monotone_only_by_dec=monotone_only_by_dec, lazy=lazy, timers=self._timers)
-        elif contextual:
-            m_pairs: MPairsContextual = MPairsContextual(ds, monotone_only_by_dec=monotone_only_by_dec, lazy=lazy, timers=self._timers)
-        elif rule_elimination:
+        else:
             # Calculate monotonicity counters
             m_pairs = None
             viewer: RuleViewer = RuleViewer(ds, monotone_only_by_dec=monotone_only_by_dec, timers=self._timers)
@@ -770,23 +662,7 @@ class TerminationBasedLearnerReduced:
             pruned_relevant_features: List[Tuple[int, Feature]] = relevant_features
 
         # Requirements for good transitions
-        if not contextual and not rule_elimination:
-            requirements_for_good_transitions = self._calculate_requirements_for_good_transitions(usable_features, features_by_change_on_ext_state)
-            nu_context_to_index = None
-            fnu_pair_to_index = None
-            fnu_idx_to_direction = None
-        elif contextual:
-            ext_states_to_contexts: Dict[Tuple[int, int], Set[Tuple[int, int]]] = self._calculate_ext_states_to_contexts(usable_features, features_by_change_on_ext_state)
-            requirements_for_good_transitions, nu_context_to_index, fnu_pair_to_index, fnu_idx_to_direction = self._calculate_requirements_for_good_transitions_contextual(usable_features,
-                                                                                                                                                                           features_by_change_on_ext_state,
-                                                                                                                                                                           ext_states_to_contexts,
-                                                                                                                                                                           m_pairs)
-        elif rule_elimination:
-            requirements_for_good_transitions = self._calculate_requirements_for_good_transitions(usable_features, features_by_change_on_ext_state)
-            nu_context_to_index = None
-            fnu_pair_to_index = None
-            fnu_idx_to_direction = None
-
+        requirements_for_good_transitions = self._calculate_requirements_for_good_transitions(usable_features, features_by_change_on_ext_state)
         logging.info(f"{len(requirements_for_good_transitions)} requirement(s) for good transitions")
 
         # Features that separate goal from non-goal states in example paths
@@ -832,45 +708,22 @@ class TerminationBasedLearnerReduced:
         # Calculate features that separate sibling edges (if applicable)
         ext_sibling_to_separating_features: Dict[Tuple[int, int, Tuple[int, int]], intbitset] = dict()
         ext_successors: Dict[Tuple[int, int], List[Tuple[str, int]]] = defaultdict(list)
-        if separate_siblings or rule_elimination:
-            if separate_siblings: raise RuntimeError("Option 'separate siblings' not yet implemented")
+        if rule_elimination:
             for ext_edge in self._iteration_ext_edges:
                 instance_idx, (src_state_idx, dst_state_idx) = ext_edge
                 ext_state: Tuple[int, int] = (instance_idx, src_state_idx)
                 instance_data: PDDLInstance = self._instance_datas[instance_idx]
                 successors: List[Tuple[Tuple[int, Any], str]] = instance_data.get_successors(src_state_idx)
 
-                if rule_elimination:
-                    # Store successor information
-                    for (succ_state_idx, succ_state), action in successors:
-                        ext_successors[ext_state].append((action, succ_state_idx))
-
-                elif separate_siblings:
-                    src_feature_values: np.ndarray = self._iteration_ext_state_to_feature_valuations.get((instance_idx, src_state_idx))
-                    features_by_change_on_ext_edge: List[List[intbitset]] = [features_by_change_on_ext_state.get((ext_state, change), intbitset()) for change in ["dec", "inc", "eqv"]]
-
-                    # Skip this transition if it is a mark/move-mark transition (this is for indexicals)
-                    #action_for_ext_edge = [action for (succ_state_idx, succ_state), action in successors if succ_state_idx == dst_state_idx][0]
-                    #if action_for_ext_edge.startswith("mark-") or action_for_ext_edge.startswith("move-mark-"): continue
-
-                    for succ_state_idx in [succ_state_idx for (succ_state_idx, succ_state), action in successors if succ_state_idx != dst_state_idx]:
-                        sibling_feature_values: np.ndarray = self._iteration_ext_state_to_feature_valuations.get((instance_idx, succ_state_idx))
-                        feature_changes_on_sibling_ext_edge: Dict[str, intbitset] = self._get_effects_on_features(src_feature_values, sibling_feature_values, relevant_features_idxs)
-                        features_by_change_on_sibling_ext_edge: List[intbitset] = [feature_changes_on_sibling_ext_edge.get(change) for change in ["dec", "inc", "eqv"]]
-                        requirement: intbitset = intbitset().union(*[features_by_change_on_ext_edge[i] - features_by_change_on_sibling_ext_edge[i] for i in [0, 1, 2]])
-                        ext_sibling: Tuple[int, int, Tuple[int, int]] = (instance_idx, src_state_idx, (dst_state_idx, succ_state_idx))
-                        assert ext_sibling not in ext_sibling_to_separating_features
-                        ext_sibling_to_separating_features[ext_sibling] = requirement
-                        logging.debug(f"Sibling: ext_sibling={ext_sibling}, requirement={requirement}")
+                # Store successor information
+                for (succ_state_idx, succ_state), action in successors:
+                    ext_successors[ext_state].append((action, succ_state_idx))
 
         return {
             "relevant_features": pruned_relevant_features,
             "f_idx_to_feature_index": f_idx_to_feature_index,
             "lower_bound_on_rank": None,
             "requirements_for_good_transitions": requirements_for_good_transitions,
-            "nu_context_to_index": nu_context_to_index,
-            "fnu_pair_to_index": fnu_pair_to_index,
-            "fnu_idx_to_direction": fnu_idx_to_direction,
             "ext_state_to_ext_edge": self._iteration_ext_state_to_ext_edge,
             "ext_state_to_feature_valuations": self._iteration_ext_state_to_feature_valuations,
             "goal_ext_pair_to_separating_features": goal_ext_pair_to_separating_features,
@@ -881,14 +734,6 @@ class TerminationBasedLearnerReduced:
             "rule_viewer": viewer,
             "ex_ext_states": self._iteration_ex_ext_states,
             "ext_successors": ext_successors,
-            #"facts": {
-            #    "monotone": set([ASPSolver.make_fact("monotone", f_idx) for f_idx in monotone_features]),
-            #    "changing_features": set([ASPSolver.make_fact("changed", self._get_global_state_index_from_ext_state(ext_state), f_idx) for ext_state, f_idxs in requirements_for_good_transitions.items() for f_idx in f_idxs]),
-            #    "goal_separating_features_1": set([ASPSolver.make_fact("goal_separating", index) for index in range(len(goal_separating_features))]),
-            #    "goal_separating_features_2": set([ASPSolver.make_fact("goal_separating", index, f_idx) for index, f_idxs in enumerate(goal_separating_features) for f_idx in f_idxs]),
-            #    "deadend_separating_features_1": set([ASPSolver.make_fact("deadend_separating", index) for index in range(len(deadend_separating_features))]),
-            #    "deadend_separating_features_2": set([ASPSolver.make_fact("deadend_separating", index, f_idx) for index, f_idxs in enumerate(deadend_separating_features) for f_idx in f_idxs]),
-            #}
         }
 
     def _get_relevant_features(self, remove_features_with_constant_bvalue: bool = False) -> List[Tuple[int, Feature]]:
@@ -911,200 +756,4 @@ class TerminationBasedLearnerReduced:
         logging.info(f"{len(selected_features_v2)} feature(s) after pruning features with same change across transitions AND same boolean valuation (num_pruned={num_pruned_v2})")
 
         return selected_features_v2
-
-    def _get_global_state_index_from_ext_state(self, ext_state: Tuple[int, int], verbose: bool = True) -> int:
-        global_state_index = self._ext_state_to_global_state_index.get(ext_state)
-        if global_state_index is None:
-            global_state_index = len(self._ext_state_to_global_state_index)
-            self._ext_state_to_global_state_index[ext_state] = global_state_index
-            self._global_state_index_to_ext_state[global_state_index] = ext_state
-            if verbose: logging.info(f"STATE_MAP: {ext_state} -> {global_state_index}")
-        return global_state_index
-
-    def _get_ext_state_from_global_state_index(self, global_state_index: int, verbose: bool = True) -> Tuple[int, int]:
-        ext_state: Tuple[int, int] = self._global_state_index_to_ext_state.get(global_state_index)
-        assert ext_state is not None
-        return ext_state
-
-    def _verify_termination(self,
-                            relevant_features: List[Tuple[int, Feature]],
-                            feature_ranks: Dict[int, int],
-                            f_idx_to_feature_index: Dict[int, int],
-                            solver_prefix: str,
-                            dump_asp_program: bool = False,
-                            **kwargs) -> bool:
-        # List of facts
-        facts: List[Dict[str, Set[Any]]] = []
-
-        # Facts for selected features
-        selected_features: List[Tuple[int, feature]] = [relevant_features[f_idx_to_feature_index[f_idx]] for f_idx in feature_ranks.keys()]
-        facts.append(self._create_facts_for_features(selected_features))
-
-        # Facts for xedges and xstates
-        facts.append(self._create_xedge_facts_for_ext_edges(self._iteration_ext_edges))
-        facts.append(self._create_xstate_facts(self._iteration_ex_ext_states))
-        dst_ext_states_in_edges: Set[Tuple[int, int]] = set([(instance_idx, edge[1]) for instance_idx, edge in self._iteration_ext_edges])
-
-        # Facts for states
-        state_space_facts: Dict[str, Set[Any]] = defaultdict(set)
-        for ext_state in self._iteration_ex_ext_states | self._iteration_non_covered_ext_states | self._iteration_goal_ext_states | self._iteration_ext_states_in_deadend_paths | dst_ext_states_in_edges:
-            global_state_index = self._get_global_state_index_from_ext_state(ext_state)
-
-            if ext_state not in (dst_ext_states_in_edges | self._iteration_ext_states_in_deadend_paths) - self._iteration_non_covered_ext_states - self._iteration_ex_ext_states:
-                # Avoid state(<global_state_index>) facts for "fringe" ext_states as this causes UNSAT verification because of covering clauses
-                state_space_facts["state"].add(ASPSolver.make_fact("state", global_state_index))
-
-            #feature_values: Tuple[int] = self._iteration_ext_state_to_feature_valuations.get(ext_state)
-            feature_values: np.ndarray = self._iteration_ext_state_to_feature_valuations.get(ext_state)
-            assert feature_values is not None, f"Non available feature valuations for ext_state={ext_state}"
-            for f_idx, _ in selected_features:
-                value = feature_values[f_idx]
-                if type(value) == bool:
-                    state_space_facts["value"].add(ASPSolver.make_fact("value", global_state_index, f_idx, 1 if value else 0))
-                else:
-                    state_space_facts["value"].add(ASPSolver.make_fact("value", global_state_index, f_idx, value))
-
-        for ext_state in self._iteration_goal_ext_states:
-            global_state_index = self._get_global_state_index_from_ext_state(ext_state)
-            state_space_facts["goal"].add(ASPSolver.make_fact("goal", global_state_index))
-
-        for ext_state in self._iteration_deadend_ext_states:
-            global_state_index = self._get_global_state_index_from_ext_state(ext_state)
-            state_space_facts["deadend"].add(ASPSolver.make_fact("deadend", global_state_index))
-
-        facts.append(state_space_facts)
-
-        # Facts for ranks
-        sorted_features: List[int] = [f_idx for _, f_idx in sorted([(rank, f_idx) for f_idx, rank in feature_ranks.items()])]
-        ranks: List[Tuple[int, int]] = list(zip(sorted_features, range(1, 2 + len(sorted_features))))
-        facts.append(self._create_facts_for_ranks(ranks))
-
-        # Create solver
-        fact_signatures: List[Tuple[Any]] = [
-            ("boolean", ("f",), "boolean(f)."),
-            ("numerical", ("f",), "numerical(f)."),
-            ("complexity", ("f", "c"), "complexity(f,c)."),
-            ("xedge", ("s", "t"), "xedge(s,t)."),
-            ("xstate", ("s",), "xstate(s)."),
-            ("state", ("s",), "state(s)."),
-            ("goal", ("s",), "goal(s)."),
-            ("deadend", ("s",), "deadend(s)."),
-            #("edge", ("s", "t"), "edge(s,t)."),
-            ("value", ("s", "f", "v"), "value(s,f,v)."),
-            #("unknown", ("s", "f"), "unknown(s,f)."),
-            #("goal_separating", ("i",), "goal_separating(i)."),
-            #("goal_separating", ("i", "f",), "goal_separating(i,f)."),
-            #("changed", ("s", "f"), "changed(s,f)."),
-            ("rank", ("f", "i"), "rank(f,i)."),
-        ]
-
-        arguments: List[str] = ["--parallel-mode=16", "-n", "0"]
-        loads: List[str] = [str(LIST_DIR / f"{solver_prefix}_verify_termination.lp")]
-        solver: ASPSolver = ASPSolver(arguments=arguments, fact_signatures=fact_signatures, loads=loads)
-        logging.info(f"Arguments: {arguments}")
-
-        # Ground solver with facts and check
-        solver.ground(*facts, dump_asp_program=dump_asp_program)
-        model, exit_code = solver.first_model() #, **options_for_solver)
-        logging.info(f"Verification of termination: exit_code: {exit_code}")
-        return exit_code == ClingoExitCode.SATISFIABLE
-
-    def _create_facts_for_features(self, relevant_features: List[Tuple[int, Feature]], uniform_costs: bool = False) -> Dict[str, Set[Any]]:
-        facts: Dict[str, Set[Any]] = defaultdict(set)
-        for f_idx, feature in relevant_features:
-            if isinstance(feature.dlplan_feature, dlplan_core.Numerical):
-                facts["numerical"].add(ASPSolver.make_fact("numerical", f_idx))
-            else:
-                facts["boolean"].add(ASPSolver.make_fact("boolean", f_idx))
-            facts["complexity"].add(ASPSolver.make_fact("complexity", f_idx, 1 if uniform_costs else feature.complexity))
-        return facts
-
-    def _create_facts_for_state_space(self,
-                                      instance_idx: int,
-                                      relevant_features: List[Tuple[int, Feature]],
-                                      relevant_vertices: Dict[int, Set[int]],
-                                      vertices_in_example_paths: Set[int]) -> Dict[str, Set[Any]]:
-        assert relevant_vertices.get(instance_idx) is not None
-        instance_data: PDDLInstance = self._instance_datas[instance_idx]
-        assert instance_data.idx == instance_idx
-
-        facts: Dict[str, Set[Any]] = defaultdict(set)
-
-        # Vertices in edges whose source vertex is relevant, not a goal, and not in an example path
-        sources: List[int] = [vertex for vertex in relevant_vertices.get(instance_idx) if vertex not in vertices_in_example_paths and not self._state_factory.is_goal_state(instance_idx, vertex)]
-        edge_vertices: Set[int] = set(sources)
-        for state_idx in sources:
-            successors: List[Tuple[Tuple[int, Any], str]] = self._state_factory.get_successors(instance_idx, state_idx)
-            edge_vertices |= set([succ_state_idx for (succ_state_idx, _), _ in successors])
-            for (succ_state_idx, _), _ in successors:
-                source = self._get_global_state_index_from_ext_state((instance_idx, state_idx))
-                target = self._get_global_state_index_from_ext_state((instance_idx, succ_state_idx))
-                facts["edge"].add(ASPSolver.make_fact("edge", source, target))
-
-        # Values for relevant or edge vertices
-        for vertex in relevant_vertices.get(instance_idx) | edge_vertices:
-            ext_state: Tuple[int, int] = (instance_idx, vertex)
-            global_state_index = self._get_global_state_index_from_ext_state(ext_state)
-            assert global_state_index is not None, f"Undefined global_state_index for {ext_state}"
-
-            if vertex in relevant_vertices.get(instance_idx):
-                facts["state"].add(ASPSolver.make_fact("state", global_state_index))
-
-            #feature_values: Tuple[int] = self._iteration_ext_state_to_feature_valuations.get(ext_state)
-            feature_values: np.ndarray = self._iteration_ext_state_to_feature_valuations.get(ext_state)
-            assert feature_values is not None, f"Non available feature valuations for ext_state={ext_state}"
-            for f_idx, _ in relevant_features:
-                value = feature_values[f_idx]
-                if type(value) == bool:
-                    facts["value"].add(ASPSolver.make_fact("value", global_state_index, f_idx, 1 if value else 0))
-                else:
-                    facts["value"].add(ASPSolver.make_fact("value", global_state_index, f_idx, value))
-
-        # Goals for relevant or edge vertices
-        for vertex in [vertex for vertex in (relevant_vertices.get(instance_idx) | edge_vertices) if self._state_factory.is_goal_state(instance_idx, vertex)]:
-            global_state_index = self._get_global_state_index_from_ext_state((instance_idx, vertex))
-            assert global_state_index is not None
-            facts["goal"].add(ASPSolver.make_fact("goal", global_state_index))
-
-        # Deadend for relevant or edge vertices
-        for vertex in [vertex for vertex in (relevant_vertices.get(instance_idx) | edge_vertices) if self._state_factory.is_deadend_state(instance_idx, vertex)]:
-            global_state_index = self._get_global_state_index_from_ext_state((instance_idx, vertex))
-            assert global_state_index is not None
-            facts["deadend"].add(ASPSolver.make_fact("deadend", global_state_index))
-
-        return facts
-
-    def _create_xedge_fact_for_ext_edge(self, ext_edge: Tuple[int, Tuple[int, int]]) -> Any:
-        instance_idx, edge = ext_edge
-        source = self._get_global_state_index_from_ext_state((instance_idx, edge[0]))
-        target = self._get_global_state_index_from_ext_state((instance_idx, edge[1]))
-        assert source is not None and target is not None
-        return ASPSolver.make_fact("xedge", source, target)
-
-    def _create_xedge_facts_for_ext_edges(self, ext_edges: List[Tuple[int, Tuple[int, int]]]) -> Dict[str, Set[Any]]:
-        return {"xedge": set([self._create_xedge_fact_for_ext_edge(ext_edge) for ext_edge in ext_edges])}
-
-    def _create_xstate_fact(self, instance_idx: int, state_idx: int) -> Any:
-        global_state_index: int = self._get_global_state_index_from_ext_state((instance_idx, state_idx))
-        return ASPSolver.make_fact("xstate", global_state_index)
-
-    def _create_xstate_facts(self, ext_states: Set[Tuple[int, int]]) -> Dict[str, Set[Any]]:
-        return {"xstate": set([self._create_xstate_fact(instance_idx, state_idx) for instance_idx, state_idx in ext_states])}
-
-    # NOT USED
-    def _create_facts_for_path(self, instance_idx: int, path: List[int]) -> Dict[str, Set[Any]]:
-        ext_edges: List[Tuple[int, Tuple[int, int]]] = [(instance_idx, edge) for edge in zip(path[:-1], path[1:])]
-        return self._create_xedge_facts_for_ext_edges(xedges)
-
-    # NOT USED
-    def _create_facts_for_unknowns(self, unknowns: Set[Tuple[int, int]]) -> Dict[str, Set[Any]]:
-        return {"unknown": set([ASPSolver.make_fact("unknown", global_state_index, f_idx) for global_state_index, f_idx in unknowns])}
-
-    # NOT USED
-    def _create_facts_for_chosen_features(self, chosen: Set[int]) -> Dict[str, Set[Any]]:
-        return {"chosen": set([ASPSolver.make_fact("chosen", f_idx) for f_idx in chosen])}
-
-    def _create_facts_for_ranks(self, ranks: Set[Tuple[int, int]]) -> Dict[str, Set[Any]]:
-        return {"rank": set([ASPSolver.make_fact("rank", f_idx, rank) for f_idx, rank in ranks])}
-# END-OF class TerminationBasedLearnerReduced
 
