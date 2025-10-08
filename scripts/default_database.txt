@@ -1,6 +1,6 @@
 {
     # Standard benchmark
-    "args1": {"args": ["--width 0", "--encoding_type", "termination", "--solver_prefix termination9", "--disable_state_space_expansion",
+    "args1": {"args": ["--width 0", "--disable_state_space_expansion",
                        "--store_features", "--complexity_limit 15", "--max_feature_depth 5",
                        "--no-deadends", "--planner", "siw+bfws", "--instance_selection forward", "--simplify_policy"]},
 
@@ -97,7 +97,7 @@
 
     # Indexicals V3
     # Default arguments
-    "args2": {"args": ["--width 0", "--encoding_type termination", "--solver_prefix termination9", "--disable_state_space_expansion",
+    "args2": {"args": ["--width 0", "--disable_state_space_expansion",
                        "--store_features", "--complexity_limit 10", "--max_feature_depth 5",
                        "--planner siw+bfws", "--instance_selection forward",
                        "--deadends"]},

@@ -88,7 +88,6 @@ if __name__ == "__main__":
     other_options = parser.add_argument_group("Other options")
     other_options.add_argument("--max_num_states_per_instance", type=int, default=10000, help="The maximum number of states per instance (default: 10,000)")
     other_options.add_argument("--max_time_per_instance", type=int, default=10000, help="The maximum time (in seconds) per instance (default: 10,000)")
-    other_options.add_argument("--encoding_type", type=EncodingType, default=EncodingType.D2, choices=[EncodingType.D2, EncodingType.EXPLICIT, EncodingType.D2_LTL, EncodingType.D2r, EncodingType.D2g, EncodingType.SOUNDNESS, EncodingType.TERMINATION], help="The encoding type for the sketch learner (default: 'd2'")
     other_options.add_argument("--max_num_rules", type=int, default=4, help="The maximum number of rules used in the explicit encoding (default: 4)")
     other_options.add_argument("--coalesce_instances", action=argparse.BooleanOptionalAction, default=False, help="Coalesce training instances")
 
@@ -101,7 +100,6 @@ if __name__ == "__main__":
     other_options.add_argument("--timeout_in_seconds_per_step", type=float, default=1200, help="Timeout in seconds for improvement step for the ASP solver (default: 60)")
     other_options.add_argument("--timeout_in_seconds", type=float, default=3600, help="Timeout in seconds for total time for the ASP solver (default: 3600)")
     other_options.add_argument("--disable_optimization_decorations", action=argparse.BooleanOptionalAction, default=False, help="Disable optimization of decorations in sketch")
-    other_options.add_argument("--solver_prefix", type=str, default=None, help="Prefix for solver's name (default: None)")
 
     args = parser.parse_args()
     if args.complexity_limit != None:
@@ -152,7 +150,6 @@ if __name__ == "__main__":
         "disable_greedy_solver": args.disable_greedy_solver,
         "disable_optimization_decorations": args.disable_optimization_decorations,
         "deadends": args.deadends,
-        "solver_prefix": args.solver_prefix,
         "simplify_policy": args.simplify_policy or args.simplify_only_conditions,
         "simplify_only_conditions": args.simplify_only_conditions,
         "separate_siblings": args.separate_siblings,
