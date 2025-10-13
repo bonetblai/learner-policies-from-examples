@@ -63,9 +63,14 @@ class SketchReduced:
         last_record: float = 0
         reporting_period: float = 60
 
+        # Non-covered states are divided into "non-closed" (those for which no rule condition is consistent with them), and
+        # "non-sound" (those that are not closed but no rule is compatible with a transition for them)
+        non_closed_ext_states: Set[Tuple[int, int]] = set()
+        non_sound_ext_states: Set[Tuple[int, int]] = set()
+
+        # Perform breadth-first exploration of reachable states
         expanded: int = 0
         generated: int = 0
-        non_covered_ext_states: Set[Tuple[int, int]] = set()
         while queue:
             timers["search"].stop()
             if timers["search"].get_elapsed_sec() - last_record > reporting_period:
@@ -99,7 +104,8 @@ class SketchReduced:
                 for state_idx in state_idx_path:
                     logging.debug(colored(f"    {state_idx}.{instance_data.get_dlplan_state(*instance_data.get_state(state_idx))}", "red"))
                 logging.root.setLevel(logging_level)
-                return False, None, {"deadend": tuple([(instance_data.idx, state_idx) for state_idx in state_idx_path])}
+                reason: Dict[str, Any] = {"deadend": tuple([(instance_data.idx, state_idx) for state_idx in state_idx_path])}
+                return False, None, reason
 
             # Number rules whose conditions are satisfied at current state
             num_consistent_conditions = len(self.dlplan_policy.evaluate_conditions(root_dlplan_state))
@@ -136,10 +142,6 @@ class SketchReduced:
                         break
             timers["expansion"].stop()
 
-            # Check closednedd
-            if num_consistent_conditions > 0 and num_alive_successors == 0:
-                logging.info(f"Sketch isn't CLOSED: #successors={len(successors)}, #consistent_conditions={num_consistent_conditions}, #compatible_successors=0")
-
             # If no successors, this is a deadend state. It may fail above check as deadend check may be incomplete
             if len(successors) == 0:
                 logging.debug(colored(f"VERIFY WIDTH: DEADEND state is r_reachable (no successors): instance_idx={instance_data.idx}, {root_state_idx}.{root_dlplan_state}", "red"))
@@ -152,17 +154,27 @@ class SketchReduced:
                 for state_idx in state_idx_path:
                     logging.debug(colored(f"    {state_idx}.{instance_data.get_dlplan_state(*instance_data.get_state(state_idx))}", "red"))
                 logging.root.setLevel(logging_level)
-                return False, None, {"deadend": tuple([(instance_data.idx, state_idx) for state_idx in state_idx_path])}
+                reason: Dict[str, Any] = {"deadend": tuple([(instance_data.idx, state_idx) for state_idx in state_idx_path])}
+                return False, None, reason
 
             if num_alive_successors == 0:
-                non_covered_ext_states.add((instance_data.idx, root_state_idx))
-                logging.info(colored(f"Sketch isn't CLOSED for {instance_data.instance_filepath()}/{instance_data.idx}, {root_state_idx}.{root_dlplan_state}", "red"))
-                if len(non_covered_ext_states) >= max_non_covered_ext_states:
+                if num_consistent_conditions == 0:
+                    non_closed_ext_states.add((instance_data.idx, root_state_idx))
+                    logging.info(colored(f"Sketch isn't CLOSED for {instance_data.instance_filepath()}/{instance_data.idx}, {root_state_idx}.{root_dlplan_state}", "red"))
+                else:
+                    non_sound_ext_states.add((instance_data.idx, root_state_idx))
+                    logging.info(colored(f"Sketch isn't SOUND for {instance_data.instance_filepath()}/{instance_data.idx}, {root_state_idx}.{root_dlplan_state}", "red"))
+                if len(non_closed_ext_states) + len(non_sound_ext_states) >= max_non_covered_ext_states:
                     break
 
-        if len(non_covered_ext_states) > 0:
+        if len(non_closed_ext_states) > 0:
             logging.root.setLevel(logging_level)
-            return False, None, {"non-covered": non_covered_ext_states}
+            reason: Dict[str, Any] = {"non-closed": non_closed_ext_states}
+            return False, None, reason
+        elif len(non_sound_ext_states) > 0:
+            logging.root.setLevel(logging_level)
+            reason: Dict[str, Any] = {"non-sound": non_sound_ext_states}
+            return False, None, reason
         else:
             logging.debug(colored(f"Sketch has BOUNDED WIDTH on {instance_data.instance_filepath()}/{instance_data.idx}", "blue"))
             logging.root.setLevel(logging_level)
