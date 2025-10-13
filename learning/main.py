@@ -51,6 +51,7 @@ if __name__ == "__main__":
     # Learner options
     learner_options = parser.add_argument_group("Learner options")
     learner_options.add_argument("--width", type=int, default=0, help="The upper bound on the sketch width (default: 0)")
+    learner_options.add_argument("--enumerate_solutions", action=argparse.BooleanOptionalAction, default=False, help="Enumerate solutions (default: False)")
 
     # Genex options
     genex_options = parser.add_argument_group("Genex options")
@@ -157,6 +158,7 @@ if __name__ == "__main__":
         "dump_asp_program": args.dump_asp_program,
         "preprocess_only": args.preprocess_only,
         "features_only": args.features_only,
+        "enumerate_solutions": args.enumerate_solutions,
     }
 
     learner = reduced_termination_based_learn_sketch_for_problem_class
