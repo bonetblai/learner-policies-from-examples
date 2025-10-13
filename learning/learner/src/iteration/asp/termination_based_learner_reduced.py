@@ -177,7 +177,7 @@ class TerminationBasedLearnerReduced:
         logging.info(f"Features: #total={len(self._iteration_feature_pool)}, #numerical={len(self._iteration_numerical_features)}, #boolean={len(self._iteration_boolean_features)}")
 
         # Paths and vertices
-        self._iteration_paths_with_idxs: List[Tuple[int, Tuple[int]]] = iteration_data.paths_with_idxs
+        self._iteration_paths_with_idx: List[Tuple[int, Tuple[int]]] = iteration_data.paths_with_idx
         self._iteration_relevant_vertices: Dict[int, Set[int]] = iteration_data.relevant_vertices
         self._iteration_non_covered_vertices: Dict[int, Set[int]] = iteration_data.non_covered_vertices
         self._iteration_vertices_in_deadend_paths: Dict[int, Set[int]] = iteration_data.vertices_in_deadend_paths
@@ -204,7 +204,7 @@ class TerminationBasedLearnerReduced:
         previous_feature_rank: int = kwargs.get("previous_feature_rank")
 
         # Print paths
-        for instance_idx, path in self._iteration_paths_with_idxs:
+        for instance_idx, path in self._iteration_paths_with_idx:
             logging.info(f"Path: instance_idx={instance_idx}, path={path}, size={len(path)}")
             instance_data: PDDLInstance = self._instance_datas[instance_idx]
             assert instance_data.idx == instance_idx
@@ -331,14 +331,14 @@ class TerminationBasedLearnerReduced:
     def _calculate_ext_states_and_edges(self):
         # Classify ext_states
         ext_states_in_relevant: Set[Tuple[int, int]] = frozenset([(instance_idx, state_idx) for instance_idx, state_idxs in self._iteration_relevant_vertices.items() for state_idx in state_idxs])
-        non_goal_ext_states_in_paths: Set[Tuple[int, int]] = frozenset([(instance_idx, ex_state) for instance_idx, path in self._iteration_paths_with_idxs for ex_state in path[:-1]])
-        goal_ext_states_in_paths: Set[Tuple[int, int]] = frozenset([(instance_idx, path[-1]) for instance_idx, path in self._iteration_paths_with_idxs])
+        non_goal_ext_states_in_paths: Set[Tuple[int, int]] = frozenset([(instance_idx, ex_state) for instance_idx, path in self._iteration_paths_with_idx for ex_state in path[:-1]])
+        goal_ext_states_in_paths: Set[Tuple[int, int]] = frozenset([(instance_idx, path[-1]) for instance_idx, path in self._iteration_paths_with_idx])
         ext_states_in_deadend_paths: Set[Tuple[int, int]] = frozenset([ext_state for deadend_path in self._iteration_deadend_paths for ext_state in deadend_path])
         deadend_ext_states: Set[Tuple[int, int]] = frozenset([deadend_path[-1] for deadend_path in self._iteration_deadend_paths])
         non_covered_ext_states: Set[Tuple[int, int]] = frozenset([(instance_idx, state_idx) for instance_idx, state_idxs in self._iteration_non_covered_vertices.items() for state_idx in state_idxs])
 
         # Edges on example paths
-        ext_edges: List[Tuple[int, Tuple[int, int]]] = [(instance_idx, ex_edge) for instance_idx, path in self._iteration_paths_with_idxs for ex_edge in zip(path[:-1], path[1:])]
+        ext_edges: List[Tuple[int, Tuple[int, int]]] = [(instance_idx, ex_edge) for instance_idx, path in self._iteration_paths_with_idx for ex_edge in zip(path[:-1], path[1:])]
 
         # Make sure ext_state_to_ext_edge includes edges on example paths
         for ext_edge in ext_edges:

@@ -1,35 +1,33 @@
 from dataclasses import dataclass
-from typing import Set, List, Dict, Union, Tuple
+from typing import Set, List, Dict, Union, Tuple, Any
 
-import pymimir as mm
-import dlplan.policy as dlplan_policy
+import numpy as np
 
 from .feature_pool import Feature
-from .state_pair_equivalence import StatePairEquivalence
-#from .tuple_graph_equivalence import TupleGraphEquivalence
-
+import dlplan.core as dlplan_core
 from ..preprocessing import InstanceData
 
 
 @dataclass
 class IterationData:
     """ Store data that is being computed in each iteration of learning sketches. """
-    # Changes in each iterations
+    current_idxs: List[int] = None
+    preprocessed_datas: List[Dict[str, Any]] = None
     instance_datas: List[InstanceData] = None
-
-    gfa_states: List[mm.GlobalFaithfulAbstractState] = None
-
+    paths_with_idx: List[Tuple[int, Tuple[int]]] = None
+    relevant_vertices: Dict[int, Set[int]] = None
     feature_pool: List[Feature] = None
-    gfa_state_global_idx_to_feature_evaluations: Dict[int, List[Union[bool, int]]] = None
 
-    state_pair_equivalences: List[dlplan_policy.Rule] = None
-    gfa_state_global_idx_to_state_pair_equivalence: Dict[int, StatePairEquivalence] = None
-    #gfa_state_global_idx_to_tuple_graph_equivalence: Dict[int, TupleGraphEquivalence] = None
+    ext_state_to_dlplan_state_index: Dict[Tuple[int, int], int] = None
+    ext_state_to_feature_valuations: Dict[Tuple[int, int], np.ndarray] = None
+    instance_idx_to_denotations_caches: Dict[int, dlplan_core.DenotationsCaches] = None
 
-    gfa_state_global_idx_to_instance_and_gfa_state_idx: Dict[int, Tuple[int, int]] = None
-    instance_idx_to_rule_repr: Dict[int, Set[str]] = None
-    rule_repr_to_idx: Dict[str, int] = None
-
-    unbounded_vertices: Dict[int, Set[int]] = None
+    non_covered_vertices: Dict[int, Set[int]] = None
     vertices_in_deadend_paths: Dict[int, Set[int]] = None
     deadend_paths: List[Tuple[Tuple[int, int]]] = None
+
+    inner_iterations: int = None
+
+    def __repr__(self) -> str:
+        return f"IterationData[current_idxs={self.current_idxs}, paths_with_idx={self.paths_with_idx}, inner_iterations={self.inner_iterations}, relevant_vertices={self.relevant_vertices}, non_covered_vertices={self.non_covered_vertices}, vertices_in_deadend_paths={self.vertices_in_deadend_paths}, deadend_paths={self.deadend_paths}]"
+
