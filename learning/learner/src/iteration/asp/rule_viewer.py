@@ -168,7 +168,8 @@ class RuleViewer:
         return self._change_to_r_idx_to_f_idxs.get("dec", dict()).get(r_idx, intbitset()) | self._change_to_r_idx_to_f_idxs.get("inc", dict()).get(r_idx, intbitset())
 
     def r_idxs_that_change(self, f_idx) -> intbitset:
-        return intbitset([r_idx for r_idx in self._active_r_idxs if f_idx in self.f_idxs_changed_by(r_idx)])
+        #return intbitset([r_idx for r_idx in self._active_r_idxs if f_idx in self.f_idxs_changed_by(r_idx)])
+        return (self._change_to_f_idx_to_r_idxs.get("dec", dict()).get(f_idx, intbitset()) | self._change_to_f_idx_to_r_idxs.get("inc", dict()).get(f_idx, intbitset())) & self._active_r_idxs
 
     def r_idxs(self) -> intbitset:
         return self._active_r_idxs
