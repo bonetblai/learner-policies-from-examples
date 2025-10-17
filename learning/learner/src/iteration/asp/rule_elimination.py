@@ -31,7 +31,7 @@ def _partition_r_idxs_with_f_idx(r_idxs: intbitset, f_idx: int, viewer: RuleView
     return partition
 
 
-class GreedySolverByRuleElimination:
+class RuleElimination:
     def __init__(self, preprocessing_data: Dict[str, Any], state_factory: StateFactory, **kwargs):
         self._preprocessing_data: Dict[str, Any] = preprocessing_data
         self._state_factory: StateFactory = state_factory

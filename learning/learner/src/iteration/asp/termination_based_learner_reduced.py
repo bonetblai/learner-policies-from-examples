@@ -33,7 +33,7 @@ from .m_pairs import MPairs
 from .rule_viewer import RuleViewer
 
 from .greedy_solver import GreedySolver
-from .greedy_solver_by_rule_elimination import GreedySolverByRuleElimination
+from .rule_elimination import RuleElimination
 from .solution_generator import SolutionGenerator
 
 
@@ -240,7 +240,7 @@ class TerminationBasedLearnerReduced:
         if not rule_elimination:
             greedy_solver: GreedySolver = GreedySolver(self._preprocessing_data, self._state_factory, **options_for_greedy_solver)
         else:
-            greedy_solver: GreedySolverByRuleElimination = GreedySolverByRuleElimination(self._preprocessing_data, self._state_factory, **options_for_greedy_solver)
+            greedy_solver: RuleElimination = RuleElimination(self._preprocessing_data, self._state_factory, **options_for_greedy_solver)
         logging.info(f"DONE")
 
         self._timers.resume("pricing/algorithm")
