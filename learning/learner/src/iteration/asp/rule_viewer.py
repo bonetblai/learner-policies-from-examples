@@ -105,6 +105,7 @@ class RuleViewer:
                     self._r_idx_to_affected_features[r_idx][i].add(feature_idx)
         self._r_idx_to_affected_features: Tuple[Tuple[intbitset, intbitset]] = tuple(self._r_idx_to_affected_features)
 
+        local_timer.stop()
         logging.info(f"RuleViewer: {local_timer.get_elapsed_sec():0.2f} second(s) for initialization: ")
 
     def _initialize_watched_rules(self):
@@ -123,6 +124,7 @@ class RuleViewer:
 
         self._feature_idx_to_watched_rules: Tuple[List[int, int]] = tuple(self._feature_idx_to_watched_rules)
 
+        local_timer.stop()
         logging.info(f"RuleViewer: {local_timer.get_elapsed_sec():0.2f} second(s) for initialization of watched rules for {len(self._feature_idx_to_r_idxs)} feature(s)")
 
     def f_idx_to_feature(self, f_idx) -> Feature:
