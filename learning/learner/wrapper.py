@@ -193,7 +193,7 @@ class Wrapper(WrapperBase):
             if f_idxs is not None:
                 # Create sketch from solution
                 dlplan_policy = D2sepDlplanPolicyFactory().make_dlplan_policy_from_rules_with_decorations(f_idxs, rules_with_decorations, self._policy_builder, iteration_data)
-                sketch = SketchReduced(dlplan_policy, self._width)
+                sketch = SketchReduced(self._benchmark._state_factory, dlplan_policy, self._width)
                 logging.info("Learned the following sketch:")
                 sketch.print(logger=True)
 
@@ -395,7 +395,7 @@ class WrapperEnumeration(WrapperBase):
 
                 # Create sketch from solution
                 dlplan_policy = D2sepDlplanPolicyFactory().make_dlplan_policy_from_rules_with_decorations(f_idxs, rules_with_decorations, self._policy_builder, iteration_data)
-                sketch = SketchReduced(dlplan_policy, self._width)
+                sketch = SketchReduced(self._benchmark._state_factory, dlplan_policy, self._width)
                 logging.info("Sketch:")
                 sketch.print(logger=True)
 
@@ -568,8 +568,8 @@ class WrapperEnumeration(WrapperBase):
                 sketch.print(logger=True)
                 print_separation_line(logger=True)
 
-                write_file(f"sketch_{self._width}.txt", str(sketch.dlplan_policy))
-                write_file(f"sketch_minimized_{self._width}.txt", str(sketch.dlplan_policy))
+                write_file(f"sketch_{self._width}.txt", str(sketch._dlplan_policy))
+                write_file(f"sketch_minimized_{self._width}.txt", str(sketch._dlplan_policy))
 
                 logging.info(f"SUCCESS {self._timers.get_elapsed_sec('feature/pool'):.02f} feature-pool {self._timers.get_elapsed_sec('preprocessing'):.02f} preprocessing {self._timers.get_elapsed_sec('asp'):.02f} ASP {self._timers.get_elapsed_sec('total'):.02f} total")
                 print_separation_line(logger=True)

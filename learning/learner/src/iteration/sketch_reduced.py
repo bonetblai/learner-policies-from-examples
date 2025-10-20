@@ -4,8 +4,9 @@ import random
 
 from collections import defaultdict, deque
 from termcolor import colored
-from typing import Dict, Set, List, Deque, MutableSet, Tuple, Any, Optional
+from typing import Dict, Set, FrozenSet, List, Deque, MutableSet, Tuple, Any, Optional
 from pathlib import Path
+from intbitset import intbitset
 
 import dlplan.core as dlplan_core
 import dlplan.policy as dlplan_policy
@@ -13,13 +14,24 @@ from dlplan.policy import PolicyMinimizer
 
 from .iteration_data import IterationData
 from ..preprocessing import PreprocessingData, InstanceData
+from ..state_space import StateFactory
 from ..util import Timer
 
 
 class SketchReduced:
-    def __init__(self, dlplan_policy: dlplan_policy.Policy, width: int):
-        self.dlplan_policy = dlplan_policy
-        self.width = width
+    def __init__(self, state_factory: StateFactory, dlplan_policy: dlplan_policy.Policy, width: int):
+        self._state_factory: StateFactory = state_factory
+        self._dlplan_policy = dlplan_policy
+        self._width = width
+
+    def _get_width_successors(self, instance_data: InstanceData, state_idx: int) -> List[Tuple[Tuple[int, Any], str]]:
+        if self._width == 0:
+            successors: List[Tuple[Tuple[int, Any], str]] = instance_data.get_successors(state_idx)
+        else:
+            successors: List[int] = list(instance_data.explore(state_idx, self._width, caching=True))
+            successors: List[Tuple[Tuple[int, Any], str]] = [(instance_data.get_state(succ_state_idx), "<not-avail>") for succ_state_idx in successors]
+        logging.debug(f"[_get_width_successors] ext_state={(instance_data.idx, state_idx)}, width={self._width}, #successors={len(successors)}")
+        return successors
 
     def _verify_policy_for_bounded_width(self,
                                          preprocessing_data: PreprocessingData,
@@ -28,13 +40,6 @@ class SketchReduced:
                                          randomized_sketch_test: int,
                                          max_non_covered_ext_states: int,
                                          **kwargs) -> Tuple[bool, Dict[int, Set[int]], Dict[str, Any]]:
-        """
-        Performs forward search over R-reachable states.
-        Initially, the R-reachable states are all initial states.
-        For each R-reachable state there must be a satisfied subgoal tuple.
-        If optimal width is required, we do not allow R-compatible states
-        that are closer than the closest satisfied subgoal tuple.
-        """
         debug = kwargs.get("debug", False)
         logging_level = logging.root.level
         new_logging_level = logging.DEBUG if debug else logging_level
@@ -68,7 +73,7 @@ class SketchReduced:
         non_closed_ext_states: Set[Tuple[int, int]] = set()
         non_sound_ext_states: Set[Tuple[int, int]] = set()
 
-        # Perform breadth-first exploration of reachable states
+        # Perform width breadth-first exploration of reachable states
         expanded: int = 0
         generated: int = 0
         while queue:
@@ -108,14 +113,14 @@ class SketchReduced:
                 return False, None, reason
 
             # Number rules whose conditions are satisfied at current state
-            num_consistent_conditions = len(self.dlplan_policy.evaluate_conditions(root_dlplan_state))
+            num_consistent_conditions = len(self._dlplan_policy.evaluate_conditions(root_dlplan_state))
 
-            # Expand state
+            # Expand state (iterate over width-successors)
             timers["expansion"].resume()
             expanded += 1
 
             timers["successors"].resume()
-            successors: List[Tuple[Tuple[int, Any], str]] = instance_data.get_successors(root_state_idx)
+            successors: List[Tuple[Tuple[int, Any], str]] = self._get_width_successors(instance_data, root_state_idx)
             generated += len(successors)
             random.shuffle(successors)
             timers["successors"].stop()
@@ -126,7 +131,7 @@ class SketchReduced:
                 logging.debug(f"VERIFY WIDTH:   SUCCESSOR: {succ_state_idx}.{succ_dlplan_state} [action={action}]")
 
                 # Is transition compatible with policy?
-                rule = self.dlplan_policy.evaluate(root_dlplan_state, succ_dlplan_state)
+                rule = self._dlplan_policy.evaluate(root_dlplan_state, succ_dlplan_state)
                 if rule is not None:
                     subgoal_states_per_r_reachable_state[root_state_idx].add(succ_state_idx)
                     logging.debug(f"VERIFY WIDTH:               ADD: {root_state_idx} -> {succ_state_idx}")
@@ -225,7 +230,7 @@ class SketchReduced:
                                     for src_state_idx, dst_state_idx in zip(state_idx_path[:-1], state_idx_path[1:]):
                                         src_dlplan_state = state_factory.get_dlplan_state(instance_data.idx, src_state_idx)
                                         dst_dlplan_state = state_factory.get_dlplan_state(instance_data.idx, dst_state_idx)
-                                        rule = self.dlplan_policy.evaluate(src_dlplan_state, dst_dlplan_state)
+                                        rule = self._dlplan_policy.evaluate(src_dlplan_state, dst_dlplan_state)
                                         logging.info(f"    {(src_state_idx, dst_state_idx)}: {rule}")
                                         assert rule is not None
                                 assert False, "CYCLE"
@@ -253,7 +258,7 @@ class SketchReduced:
                                 for src_state_idx, dst_state_idx in zip(state_idx_path, state_idx_path[1:] + [state_prime_idx]):
                                     src_dlplan_state = state_factory.get_dlplan_state(instance_data.idx, src_state_idx)
                                     dst_dlplan_state = state_factory.get_dlplan_state(instance_data.idx, dst_state_idx)
-                                    rule = self.dlplan_policy.evaluate(src_dlplan_state, dst_dlplan_state)
+                                    rule = self._dlplan_policy.evaluate(src_dlplan_state, dst_dlplan_state)
                                     logging.info(f"    {(src_state_idx, dst_state_idx)}: {rule}")
                             assert False, "CYCLE"
                             return False, {"cycle": {(instance_data.idx, state_idx) for state_idx in state_idxs_in_path.union([state_prime_idx])}}
@@ -280,13 +285,10 @@ class SketchReduced:
                                          preprocessing_data: PreprocessingData,
                                          iteration_data: IterationData,
                                          instance_data: InstanceData) -> bool:
-        """
-        Returns True iff sketch features separate goal from nongoal states.
-        """
         goal_b_values = set()
         nongoal_b_values = set()
-        booleans = self.dlplan_policy.get_booleans()
-        numericals = self.dlplan_policy.get_numericals()
+        booleans = self._dlplan_policy.get_booleans()
+        numericals = self._dlplan_policy.get_numericals()
         for gfa_state_idx, gfa_state in enumerate(instance_data.gfa.get_states()):
             new_instance_idx = gfa_state.get_abstraction_index()
             new_instance_data = preprocessing_data.instance_datas[new_instance_idx]
@@ -319,7 +321,9 @@ class SketchReduced:
             (1) subproblems are safe,
             (2) sketch only classifies delta optimal state pairs as good,
             (3) sketch is acyclic, and
-            (4) sketch features separate goals from nongoal states. """
+            (4) sketch features separate goals from nongoal states.
+        """
+        #logging.info(f"[solves] instance_data={instance_data}")
 
         test_goal_separating_features: bool = kwargs.get("test_goal_separating_features", False)
         randomized_sketch_test: int = kwargs.get("randomized_sketch_test", None)
@@ -351,7 +355,7 @@ class SketchReduced:
         return True, None
 
     def minimize(self, policy_builder: Any):
-        #return SketchReduced(PolicyMinimizer().minimize(self.dlplan_policy, policy_builder), self.width)
+        #return SketchReduced(PolicyMinimizer().minimize(self._dlplan_policy, policy_builder), self._width)
         raise RuntimeError("Policy minimization must be fixed; not yet done!")
 
     def parse_feature(self, feature: str) -> List:
@@ -510,7 +514,7 @@ class SketchReduced:
             elif f[0] == "b_nullary":
                 return f"{f[2]()}" if formula else f"<nullary({f[2]})>"
             elif f[0].startswith("b_"):
-                logging.warning(f"Unexpected Boolean {f}") 
+                logging.warning(f"Unexpected Boolean {f}")
                 return f"<unexpected-boolean({f})>"
 
             # Numerical features
@@ -523,7 +527,7 @@ class SketchReduced:
                 concept2: str = decode(f[4], formula=False, indent=1 + indent)
                 return f"Distance({concept1}, {role}, {concept2}))"
             elif f[0].startswith("n_"):
-                logging.warning(f"Unexpected numerical {f}") 
+                logging.warning(f"Unexpected numerical {f}")
                 return f"<unexpected-numerical({f})>"
 
             # Roles
@@ -554,7 +558,7 @@ class SketchReduced:
                 vpair: str = "(" + ",".join(vars[-2:]) + ")"
                 return f"[{role} & {concept}]" if formula else f"{{{vpair} : {role} & {concept}}}"
             elif f[0].startswith("r_"):
-                logging.warning(f"Unexpected role {f}") 
+                logging.warning(f"Unexpected role {f}")
                 return f"<unexpected-role({f})>"
 
             # Concepts
@@ -585,7 +589,7 @@ class SketchReduced:
                 role1: str = decode(f[2], formula=True, indent=1 + indent)
                 role2: str = decode(f[3], formula=True, indent=1 + indent)
                 if formula:
-                    return f"[Forall {qvar}.[{role1} <=> {role1}]]({var})"
+                    return f"[Forall {qvar}.[{role1} <=> {role2}]]({var})"
                 else:
                     return f"{{{var} : {{{qvar} : {role1}}} = {{{qvar} : {role2}}}}}"
             elif f[0] == "c_some":
@@ -607,7 +611,7 @@ class SketchReduced:
                 else:
                     return f"{{{var} : Forall {qvar}.[{role} => {concept}]}}"
             elif f[0].startswith("c_"):
-                logging.warning(f"Unexpected concept {f}") 
+                logging.warning(f"Unexpected concept {f}")
                 return f"<unexpected-concept({f})>"
 
             # Unexpected
@@ -617,7 +621,7 @@ class SketchReduced:
         return decode(parsed, formula=False)
 
     def print(self, logger: bool = False):
-        sketch_lines: List[str] = str(self.dlplan_policy).splitlines()
+        sketch_lines: List[str] = str(self._dlplan_policy).splitlines()
 
         features: Dict[str, List] = dict()
         for feature_type in ["(:booleans", "(:numericals"]:
@@ -633,10 +637,10 @@ class SketchReduced:
         if logger:
             for line in sketch_lines:
                 logging.info(line)
-            #logging.info(str(self.dlplan_policy))
-            logging.info(f"Numer of sketch rules: {len(self.dlplan_policy.get_rules())}")
-            logging.info(f"Number of selected features: {len(self.dlplan_policy.get_booleans()) + len(self.dlplan_policy.get_numericals())}")
-            logging.info(f"Maximum complexity of selected feature: {max([0] + [boolean.get_element().compute_complexity() for boolean in self.dlplan_policy.get_booleans()] + [numerical.get_element().compute_complexity() for numerical in self.dlplan_policy.get_numericals()])}")
+            #logging.info(str(self._dlplan_policy))
+            logging.info(f"Numer of sketch rules: {len(self._dlplan_policy.get_rules())}")
+            logging.info(f"Number of selected features: {len(self._dlplan_policy.get_booleans()) + len(self._dlplan_policy.get_numericals())}")
+            logging.info(f"Maximum complexity of selected feature: {max([0] + [boolean.get_element().compute_complexity() for boolean in self._dlplan_policy.get_booleans()] + [numerical.get_element().compute_complexity() for numerical in self._dlplan_policy.get_numericals()])}")
 
             for feature_type, features in features.items():
                 for fid, feature in features:
@@ -645,8 +649,8 @@ class SketchReduced:
         else:
             for line in sketch_lines:
                 print(line)
-            #print(str(self.dlplan_policy))
-            print(f"Numer of sketch rules: {len(self.dlplan_policy.get_rules())}")
-            print(f"Number of selected features: {len(self.dlplan_policy.get_booleans()) + len(self.dlplan_policy.get_numericals())}")
-            print(f"Maximum complexity of selected feature: {max([0] + [boolean.get_element().compute_complexity() for boolean in self.dlplan_policy.get_booleans()] + [numerical.get_element().compute_complexity() for numerical in self.dlplan_policy.get_numericals()])}")
+            #print(str(self._dlplan_policy))
+            print(f"Numer of sketch rules: {len(self._dlplan_policy.get_rules())}")
+            print(f"Number of selected features: {len(self._dlplan_policy.get_booleans()) + len(self._dlplan_policy.get_numericals())}")
+            print(f"Maximum complexity of selected feature: {max([0] + [boolean.get_element().compute_complexity() for boolean in self._dlplan_policy.get_booleans()] + [numerical.get_element().compute_complexity() for numerical in self._dlplan_policy.get_numericals()])}")
 

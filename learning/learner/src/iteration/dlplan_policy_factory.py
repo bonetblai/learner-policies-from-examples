@@ -99,10 +99,10 @@ class ExplicitDlplanPolicyFactory(DlplanPolicyFactory):
         return rules
 
     def make_dlplan_policy_from_r_idxs_with_decorations(self, r_idxs_with_decorations: Set[Tuple[int, Set[int], Set[int]]], r_idx_to_rule: Dict[int, Any], policy_builder: PolicyFactory, iteration_data: IterationData):
-        assert False, "make_dlplan_policy_from_r_idxs_with_decorations"
+        raise RuntimeError("[ExplicitDlplanPolicyFactory] make_dlplan_policy_from_r_idxs_with_decorations() not implemented")
 
     def make_dlplan_policy_from_rules_with_decorations(self, rules_with_decorations: Set[Tuple[Any, Set[int], Set[int]]], policy_builder: PolicyFactory, iteration_data: IterationData):
-        assert False, "make_dlplan_policy_from_rules_with_decorations"
+        raise RuntimeError("[ExplicitDlplanPolicyFactory] make_dlplan_policy_from_rules_with_decorations() not implemented")
 
 class D2sepDlplanPolicyFactory(DlplanPolicyFactory):
     """
