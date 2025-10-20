@@ -1,7 +1,10 @@
 import logging
 import tempfile
-from typing import List, Tuple, Dict, Union, Optional, Any
+from intbitset import intbitset
+from collections import deque
+from itertools import combinations
 from pathlib import Path
+from typing import List, Tuple, Dict, Set, FrozenSet, Union, Optional, Any
 
 from tarski.syntax.formulas import Atom as _TarskiAtom
 from tarski.fstrips.problem import Problem as _TarskiInstance
@@ -88,7 +91,8 @@ class PDDLVocabulary:
                     for predicate in self._get_affected_predicates(effect):
                         if predicate in self._static_symbols:
                             self._static_symbols.remove(predicate)
-            self._fluent_symbols: Set[Any] = set(instance.language.predicates) - self._static_symbols
+            self._static_symbols: FrozenSet[Any] = frozenset(self._static_symbols)
+            self._fluent_symbols: FrozenSet[Any] = frozenset(instance.language.predicates) - self._static_symbols
 
             # Analyze domain to calculate constants
             self._constants: List[Any] = [instance.language.get_constant(obj) for obj in  self._get_constants_from_pddl_domain(domain_filepath)]
@@ -114,7 +118,7 @@ class PDDLVocabulary:
                 self._vocabulary_info.add_constant(str(constant.name))
 
         else:
-            assert False, f"Non-tarski PDDLVocabulary for not yet implemented!"
+            raise RuntimeError(f"Non-tarski PDDLVocabulary for not yet implemented!")
 
     def _get_affected_predicates(self, effect: Any) -> List[Predicate]:
         if isinstance(effect, fstrips.AddEffect):
@@ -185,29 +189,29 @@ class PDDLDomain:
 class MimirInstance:
     def __init__(self, domain: PDDLDomain, instance_filepath: Path):
         # Must do something with domain and instance file
-        #assert False, "FIX: CALL Mimir API"
+        #assert False, "Mimir API"
         pass
 
     def create_operator_from_action_str(self, action: str) -> Any:
-        assert False, "FIX: CALL Mimir API: create_operator_from_action_str"
+        raise RuntimeError("Mimir API: create_operator_from_action_str() not implemented")
 
     def get_dlplan_state(self, state_idx: int, state: Any) -> dlplan_core.State:
-        assert False, "FIX: CALL Mimir API: get_dlplan_state"
+        raise RuntimeError("Mimir API: get_dlplan_state() not implemented")
 
     def is_goal_state(self, state: Any) -> bool:
-        assert False, "FIX: CALL Mimir API: is_goal_state"
+        raise RuntimeError("Mimir API: is_goal_state() not implemented")
 
     def is_deadend_state(self, state: Any) -> bool:
-        assert False, "FIX: CALL Mimir API: is_deadend_state"
+        raise RuntimeError("Mimir API: is_deadend_state() not implemented")
 
     def get_initial_state(self) -> Any:
-        assert False, "FIX: CALL Mimir API: get_initial_state"
+        raise RuntimeError("Mimir API: get_initial_state() not implemented")
 
     def get_applicable_actions(self, state: Any) -> List[Any]:
-        assert False, "FIX: CALL Mimir API: get_applicable_actions"
+        raise RuntimeError("Mimir API: get_applicable_actions() not implemented")
 
     def get_next_state(self, state: Any, action: str) -> Any:
-        assert False, "FIX: CALL Mimir API: get_next_state"
+        raise RuntimeError("Mimir API: get_next_state() not implemented")
 
 
 class TarskiInstance:
@@ -450,6 +454,15 @@ class PDDLInstance:
         self._state_idx_to_successors: List[Tuple[int, str]] = []
         self._state_idx_to_deadend_value: List[bool] = []
 
+        # State-atom idxs
+        self._atom_idx_to_atom: List[_TarskiAtom] = []
+        self._atom_to_atom_idx: Dict[_TarskiAtom, int] = dict()
+
+        # Atoms, tuples and exploration caching
+        self._atoms_cache: Dict[int, intbitset] = dict()
+        self._tuples_cache: Dict[Tuple[int, int], FrozenSet[intbitset]] = dict()
+        self._explore_cache: Dict[Tuple[int, int], intbitset] = dict()
+
     def re_index(self, new_instance_idx: int) -> bool:
         if self._instance.re_index(new_instance_idx):
             self.idx = new_instance_idx
@@ -553,6 +566,72 @@ class PDDLInstance:
             state_trajectory.append(next_state)
         return state_trajectory
 
+    def get_atom_idx(self, atom: _TarskiAtom) -> int:
+        atom_idx: int = self._atom_to_atom_idx.get(atom, None)
+        if atom_idx is None:
+            atom_idx: int = len(self._atom_idx_to_atom)
+            self._atom_idx_to_atom.append(atom)
+            self._atom_to_atom_idx[atom] = atom_idx
+        return atom_idx
+
+    def get_atom(self, atom_idx: int) -> _TarskiAtom:
+        return self._atom_idx_to_atom[atom_idx]
+
+    def get_atoms(self, state_idx: int, caching: bool = False) -> intbitset:
+        # Revise cache
+        atoms: intbitset = self._atoms_cache.get(state_idx, None)
+        if atoms is not None:
+            return atoms
+
+        state: _TarskiState = self.get_state(state_idx)[1]
+        atoms: intbitset = intbitset([self.get_atom_idx(atom) for atom in state.as_atoms()])
+
+        # Insert into cache and return
+        if caching: self._atoms_cache[state_idx] = atoms
+        return atoms
+
+    def get_tuples(self, state_idx: int, width: int, caching: bool = False) -> FrozenSet[intbitset]:
+        # Revise cache
+        tuples: FrozenSet[intbitset] = self._tuples_cache.get((state_idx, width), None)
+        if tuples is not None:
+            return tuples
+
+        tuples: Set[intbitset] = set()
+        atoms: intbitset = self.get_atoms(state_idx, caching)
+        for w in range(1 + width):
+            tuples.update(combinations(atoms, w))
+        tuples: FrozenSet[intbitset] = frozenset(tuples)
+
+        # Insert into cache and return
+        if caching: self._tuples_cache[(state_idx, width)] = tuples
+        return tuples
+
+    def explore(self, root_idx: int, width: int, caching: bool = False) -> intbitset:
+        # Revise cache
+        generated: intbitset = self._explore_cache.get((root_idx, width), None)
+        if generated is not None:
+            return generated
+
+        generated: intbitset = intbitset()
+        seen_tuples: Set[intbitset] = set()
+        q: deque = deque([root_idx])
+        while len(q) > 0:
+            logging.debug(f"Iteration: seen_tuples={sorted(seen_tuples, key=lambda t: len(t))}")
+            state_idx: int = q.popleft()
+            generated.add(state_idx)
+            unseen_tuples: FrozenSet[intbitset] = self.get_tuples(state_idx, width, caching) - seen_tuples
+            logging.debug(f" POP: state_idx={state_idx}, unseen_tuples={sorted(unseen_tuples, key=lambda t: len(t))}")
+            if len(unseen_tuples) > 0:
+                seen_tuples |= unseen_tuples
+                for (succ_state_idx, succ_state), action_str in self.get_successors(state_idx):
+                    q.append(succ_state_idx)
+                    logging.debug(f"PUSH: state_idx{succ_state_idx}")
+        logging.debug(f"Explore: state_idx={state_idx}, width={width}, generated={sorted(generated)}")
+
+        # Insert into cache and return
+        if caching: self._explore_cache[(root_idx, width)] = generated
+        return generated
+
 class StateFactory:
     def __init__(self, family_name: str, domain_filepath: Path, instance_filepaths: List[Path], planner: str, deadends: Optional[bool] = None, using_tarski: bool = True):
         self._family_name: str = family_name
@@ -612,7 +691,7 @@ class StateFactory:
         return self._instances[instance_idx].get_plan_for_state(state, instance_filename)
 
     def get_plan_for_state(self, instance_idx: int, state: Any) -> Tuple[bool, List[str]]:
-        assert False, "Use get_plan_for_state_idx()"
+        raise RuntimeError("Don't call get_plan_for_state(), use get_plan_for_state_idx() instead!")
 
     def is_goal_state(self, instance_idx: int, state_idx: int) -> bool:
         return self._instances[instance_idx].is_goal_state(state_idx)
@@ -648,4 +727,15 @@ class StateFactory:
 
     def get_low_level_state_trajectory_from_plan(self, instance_idx: int, plan: List[str]) -> List[Any]:
         return self._instances[instance_idx].get_low_level_state_trajectory_from_plan(plan)
+
+    # Width-based exploration
+    def get_atoms(self, instance_idx: int, state_idx: int, caching: bool = False) -> intbitset:
+        return self._instances[instance_idx].get_atoms(state_idx, caching)
+
+    def get_tuples(self, instance_idx: int, state_idx: int, width: int, caching: bool = False) -> FrozenSet[intbitset]:
+        return self._instances[instance_idx].get_tuples(state_idx, width, caching)
+
+    def explore(self, instance_idx: int, root_idx: int, width: int, caching: bool = False) -> List[Any]:
+        logging.info(f"Width={width} exploration from {(instance_idx, root_idx)}")
+        return self._instances[instance_idx].explore(root_idx, width, caching)
 
