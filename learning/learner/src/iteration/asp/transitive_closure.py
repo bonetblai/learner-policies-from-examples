@@ -4,12 +4,12 @@ import logging
 from intbitset import intbitset
 
 from termcolor import colored
-from typing import Set, Tuple, List, Union, Dict, Any, Optional, Union
+from typing import Set, Tuple, List, Union, Dict, Optional, Union
 from collections import defaultdict
 
 
 class TransitiveClosure:
-    def __init__(self, TC: Any = None, debug: bool = False):
+    def __init__(self, TC: "TransitiveClosure" = None, debug: bool = False):
         start_at: Dict[int, intbitset] = defaultdict(intbitset)
         end_at: Dict[int, intbitset] = defaultdict(intbitset)
         self._TC: Dict[str, Dict[int, intbitset]] = {"start-at": start_at, "end-at": end_at}
