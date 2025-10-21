@@ -282,6 +282,7 @@ class PolicyFinalizer:
                                      solution: intbitset,
                                      r_idx_to_info: Dict[int, Tuple[int, intbitset]],
                                      **kwargs) -> Dict[str, Dict[int, Dict[int, intbitset]]]:
+        assert False, "CHECK: need to revise naive simplification assuring that only 'active' rules are considered, not all of them"
         # Necessary f_idxs
         r_idx_to_necessary_f_idxs: Dict[int, List[intbitset]] = defaultdict(list)
         for annotation, requirement in self._annotated_requirements:
@@ -367,11 +368,15 @@ class PolicyFinalizer:
 
     def __call__(self, f_idxs: intbitset, r_idx_to_info: Dict[int, Tuple[int, intbitset]], **kwargs) -> Tuple[intbitset, Dict[str, Dict[int, Dict[int, intbitset]]]]:
         # Solve pending requirements
-        solution, _ = self._solve_pending_requirements(f_idxs)
-        if solution is None: return None, None
+        if kwargs.get("solve_pending_requirements", False):
+            solution, _ = self._solve_pending_requirements(f_idxs)
+            if solution is None:
+                return None, None
+            elif solution != f_idxs:
+                logging.info(f"{len(solution - f_idxs)} feature(s) added to solution: {sorted(solution - f_idxs)}")
+        else:
+            solution = f_idxs
 
-        if solution != f_idxs:
-            logging.info(f"{len(solution - f_idxs)} feature(s) added to solution: {sorted(solution - f_idxs)}")
         cost: int = sum([self._relevant_features[self._f_idx_to_feature_index[f_idx]][1].complexity for f_idx in solution])
         logging.info(f"Solution {sorted(solution)} has cost {cost}")
 
