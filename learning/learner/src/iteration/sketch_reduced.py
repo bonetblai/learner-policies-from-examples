@@ -636,16 +636,17 @@ class SketchReduced:
                 features[feature_type[2:]] = list(zip(fids, names))
         """
 
-        features: List[Tuple[str, int, str]] = []
+        features: List[Tuple[int, int, str]] = []
         max_complexity: int = 0
         sum_complexity: int = 0
         for feature in list(self._dlplan_policy.get_booleans()) + list(self._dlplan_policy.get_numericals()):
-            fid: str = feature.get_key()
+            fid: int = int(feature.get_key()[1:])
             complexity: int = feature.get_element().compute_complexity()
             decoded: str = self.decode_feature(str(feature.get_element()))
             features.append((fid, complexity, decoded))
             max_complexity = max(max_complexity, complexity)
             sum_complexity += complexity
+        features: List[Tuple[int, int, str]] = sorted(features)
 
         if logger:
             for line in sketch_lines:
@@ -656,7 +657,7 @@ class SketchReduced:
             logging.info(f"Complexity of selected features: max={max_complexity}, sum={sum_complexity}")
 
             for fid, complexity, decoded in features:
-                logging.info(f"Feature {fid}/{complexity}: {decoded}")
+                logging.info(f"Feature f{fid}/{complexity}: {decoded}")
 
         else:
             for line in sketch_lines:
@@ -667,5 +668,5 @@ class SketchReduced:
             print(f"Complexity of selected features: max={max_complexity}, sum={sum_complexity}")
 
             for fid, complexity, decoded in features:
-                print(f"Feature {fid}/{complexity}: {decoded}")
+                print(f"Feature f{fid}/{complexity}: {decoded}")
 
