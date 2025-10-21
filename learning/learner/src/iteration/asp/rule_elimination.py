@@ -81,21 +81,21 @@ class RuleElimination:
         monotone_by_dec: int = 1 if self._viewer.is_monotone(f_idx, monotone_only_by_dec=True) else 0
         return (monotone_by_dec, len(r_idxs_to_remove) / feature_complexity, 1 if f_idx in chosen else 0, num_blocks, std_block_sizes) #, -feature_complexity)
 
-    def _rec_solve(self,
-                   branch: List[int],
-                   chosen: intbitset,
-                   above: intbitset,
-                   r_idx_to_info: Dict[int, Tuple[int, intbitset]],
-                   **kwargs) -> intbitset:
+    def _rec_solve_v1(self,
+                      branch: List[int],
+                      chosen: intbitset,
+                      above: intbitset,
+                      r_idx_to_info: Dict[int, Tuple[int, intbitset]],
+                      **kwargs) -> intbitset:
         indent_str: str = '   ' * len(branch)
 
         # Base case: if no remaining rules, empty set of features is solution
         r_idxs: intbitset = self._viewer.r_idxs()
         if len(r_idxs) == 0: return intbitset()
 
-        # Get eligible features sorted by score, removing features that do not eliminate any rule (i.e., with zero score in corresponding component)
+        # Sort eligible features by score, removing features that do not eliminate any rule (i.e., with zero score in corresponding component)
         eligible_features: intbitset = self._viewer.monotone_features(kwargs.get("monotone_only_by_dec", False))
-        logging.info(f"[_rec_solve]:{indent_str} => chosen={list(chosen)}, r_idxs={list(r_idxs)}, {len(eligible_features)} mononote feature(s)")
+        logging.info(f"[_rec_solve_v1]:{indent_str} => chosen={list(chosen)}, r_idxs={list(r_idxs)}, {len(eligible_features)} mononote feature(s)")
         eligible_features_with_score: List[Tuple[int, Tuple[float]]] = [(f_idx, self._score_fn(f_idx, chosen)) for f_idx in eligible_features]
         eligible_features_with_non_zero_score: List[Tuple[int, Tuple[float]]] = [(f_idx, score) for f_idx, score in eligible_features_with_score if score[1] > 0]
         sorted_eligible_features: List[Tuple[int, Tuple[float]]] = sorted(eligible_features_with_non_zero_score, key=lambda item: item[1], reverse=True)
@@ -126,7 +126,7 @@ class RuleElimination:
         complexity: int = self._relevant_features[self._f_idx_to_feature_index[best_f_idx]][1].complexity
         r_idxs_to_remove: intbitset = intbitset([r_idx for r_idx in r_idxs if best_f_idx in self._viewer.f_idxs_changed_by(r_idx)])
         partition: Dict[Tuple[Tuple[int, int]], intbitset] = _partition_r_idxs_with_f_idx(r_idxs, best_f_idx, self._viewer)
-        logging.info(f"[_rec_solve]:{indent_str}    f{best_f_idx}.{self._relevant_features[self._f_idx_to_feature_index[best_f_idx]][1]._dlplan_feature}/{complexity}, score={best_score}, r_idxs_to_remove={r_idxs_to_remove}, partition={[len(block - r_idxs_to_remove) for block in partition.values()]}")
+        logging.info(f"[_rec_solve_v1]:{indent_str}    f{best_f_idx}.{self._relevant_features[self._f_idx_to_feature_index[best_f_idx]][1]._dlplan_feature}/{complexity}, score={best_score}, r_idxs_to_remove={r_idxs_to_remove}, partition={[len(block - r_idxs_to_remove) for block in partition.values()]}")
         assert len(r_idxs_to_remove) > 0
 
         # Calculate info
@@ -148,7 +148,7 @@ class RuleElimination:
                 self._viewer.remove_rule(r_idx)
 
             # Recursive call
-            solution_for_block = self._rec_solve(branch + [best_f_idx], chosen | solution, above | singleton, r_idx_to_info, **kwargs)
+            solution_for_block = self._rec_solve_v1(branch + [best_f_idx], chosen | solution, above | singleton, r_idx_to_info, **kwargs)
             solution |= solution_for_block
 
             # Restore r_idxs not in partition block after recursive call
@@ -159,8 +159,81 @@ class RuleElimination:
         for r_idx in r_idxs_to_remove:
             self._viewer.restore_rule(r_idx)
 
-        logging.info(f"[_rec_solve]:{indent_str} solution={list(solution)}")
+        logging.info(f"[_rec_solve_v1]:{indent_str} solution={list(solution)}")
         return solution
+
+    def _rec_solve_v2(self,
+                      branch: List[int],
+                      chosen: intbitset,
+                      above: intbitset,
+                      r_idx_to_info: Dict[int, Tuple[int, intbitset]],
+                      **kwargs) -> intbitset:
+        indent_str: str = '   ' * len(branch)
+
+        # Base case: if no remaining rules, empty set of features is solution
+        r_idxs: intbitset = self._viewer.r_idxs()
+        if len(r_idxs) == 0: return intbitset()
+
+        # Sort eligible features by score, removing features that do not eliminate any rule (i.e., with zero score in corresponding component)
+        eligible_features: intbitset = self._viewer.monotone_features(kwargs.get("monotone_only_by_dec", False))
+        logging.info(f"[_rec_solve_v2]:{indent_str} => chosen={list(chosen)}, r_idxs={list(r_idxs)}, {len(eligible_features)} mononote feature(s)")
+        eligible_features_with_score: List[Tuple[int, Tuple[float]]] = [(f_idx, self._score_fn(f_idx, chosen)) for f_idx in eligible_features]
+        eligible_features_with_non_zero_score: List[Tuple[int, Tuple[float]]] = [(f_idx, score) for f_idx, score in eligible_features_with_score if score[1] > 0]
+        random.shuffle(eligible_features_with_non_zero_score)
+        sorted_eligible_features: List[Tuple[int, Tuple[float]]] = sorted(eligible_features_with_non_zero_score, key=lambda item: item[1], reverse=True)
+
+        # Try eligible feature in order by score, returning first solution found
+        for f_idx, score in sorted_eligible_features:
+            complexity: int = self._relevant_features[self._f_idx_to_feature_index[f_idx]][1].complexity
+            r_idxs_to_remove: intbitset = intbitset([r_idx for r_idx in r_idxs if f_idx in self._viewer.f_idxs_changed_by(r_idx)])
+            partition: Dict[Tuple[Tuple[int, int]], intbitset] = _partition_r_idxs_with_f_idx(r_idxs, f_idx, self._viewer)
+            logging.info(f"[_rec_solve_v2]:{indent_str}    f{f_idx}.{self._relevant_features[self._f_idx_to_feature_index[f_idx]][1]._dlplan_feature}/{complexity}, score={score}, r_idxs_to_remove={r_idxs_to_remove}, partition={[len(block - r_idxs_to_remove) for block in partition.values()]}")
+            assert len(r_idxs_to_remove) > 0
+
+            # Register rules info
+            for r_idx in r_idxs_to_remove:
+                r_idx_to_info[r_idx] = (f_idx, intbitset(above))
+
+            # Remove rules that change f_idx
+            for r_idx in r_idxs_to_remove:
+                self._viewer.remove_rule(r_idx)
+            alive_r_idxs: intbitset = r_idxs - r_idxs_to_remove
+
+            # Recursion on each partition block
+            successful_recursion: bool = True
+            singleton: intbitset = intbitset([f_idx])
+            solution: intbitset = intbitset(singleton)
+            for block in partition.values():
+                # Remove r_idxs not in partition block before recursive call
+                r_idxs_not_in_block: intbitset = alive_r_idxs - block
+                for r_idx in r_idxs_not_in_block:
+                    self._viewer.remove_rule(r_idx)
+
+                # Recursive call
+                solution_for_block = self._rec_solve_v2(branch + [f_idx], chosen | solution, above | singleton, r_idx_to_info, **kwargs)
+                if solution_for_block is None:
+                    successful_recursion = False
+                else:
+                    solution |= solution_for_block
+
+                # Restore r_idxs not in partition block after recursive call
+                for r_idx in r_idxs_not_in_block:
+                    self._viewer.restore_rule(r_idx)
+
+                # If failure, break
+                if not successful_recursion: break
+
+            # Restore rules that change f_idx
+            for r_idx in r_idxs_to_remove:
+                self._viewer.restore_rule(r_idx)
+
+            if successful_recursion:
+                logging.info(f"[_rec_solve_v2]:{indent_str} solution={list(solution)}")
+                return solution
+
+        # Backtrack because there is no solution
+        logging.info(f"[_rec_solve_v2]:{indent_str} Backtrack")
+        return None
 
     def solve(self, **kwargs) -> Any:
         # Reset rule viewer
@@ -177,13 +250,12 @@ class RuleElimination:
 
         # TODO: Fix error for zenotravel3
         # TODO: Prefer numerical over boolean features
-        # TODO: backtrack when failing to find a feature
-        logging.warning(colored("TODO: backtrack when failing to find a feature", "magenta", attrs=["bold"]))
-        #assert False
 
         # Calculate features that "eliminate" all rules with greedy solver
         r_idx_to_info: Dict[int, Tuple[int, intbitset]] = dict()
-        f_idxs = self._rec_solve([], intbitset(), intbitset(), r_idx_to_info, **kwargs)
+        f_idxs = self._rec_solve_v2([], intbitset(), intbitset(), r_idx_to_info, **kwargs)
+        if f_idxs is None:
+            raise RuntimeError("No solution for given features")
 
         # Finalize policy
         solution, cost, decorations = finalizer(f_idxs, r_idx_to_info, **finalizer_options)
