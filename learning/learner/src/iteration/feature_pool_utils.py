@@ -234,7 +234,8 @@ def generate_features(syntactic_element_factory: Any,
                       additional_booleans: List[str] = [],
                       additional_numericals: List[str] = [],
                       max_feature_depth: Optional[int] = None,
-                      analyze_features: Optional[str] = None) -> Tuple[List[Feature], Dict[str, int]]:
+                      analyze_features: Optional[str] = None,
+                      **kwargs) -> Tuple[List[Feature], Dict[str, int]]:
     # Statistics
     generation_timer = Timer(stopped=True)
     distance_features_timer = Timer(stopped=True)

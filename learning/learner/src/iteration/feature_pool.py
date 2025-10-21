@@ -24,7 +24,7 @@ class Feature:
         return self._max_depth_complexity
 
     def __eq__(self, other: "Feature"):
-        return self.dlplan_feature == other.dlplan_feature
+        return self._dlplan_feature == other._dlplan_feature
 
     def __hash__(self):
-        return hash(str(self.dlplan_feature))
+        return hash(str(self._dlplan_feature))

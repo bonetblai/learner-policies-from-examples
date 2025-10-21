@@ -56,8 +56,8 @@ class FeaturePool:
         else:
             logging.info(colored("Generating features...", "blue"))
             pool, _, statistics = generate_features(self._benchmark._domain_data.syntactic_element_factory,
-                                                    self._dlplan_states,
-                                                    self._instance_idx_to_denotations_caches,
+                                                    self._benchmark._dlplan_states,
+                                                    self._benchmark._instance_idx_to_denotations_caches,
                                                     **kwargs)
         logging.info(f"Feature statistics: {statistics}")
 
