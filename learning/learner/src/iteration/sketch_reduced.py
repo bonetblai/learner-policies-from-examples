@@ -623,6 +623,7 @@ class SketchReduced:
     def print(self, logger: bool = False):
         sketch_lines: List[str] = str(self._dlplan_policy).splitlines()
 
+        """
         features: Dict[str, List] = dict()
         for feature_type in ["(:booleans", "(:numericals"]:
             features_str = [line for line in sketch_lines if line.startswith(feature_type)][0]
@@ -633,6 +634,18 @@ class SketchReduced:
                 fids = [int(item[2:]) for i, item in enumerate(features_list) if i % 2 == 0]
                 names = [item[:-1].strip('"') for i, item in enumerate(features_list) if i % 2 == 1]
                 features[feature_type[2:]] = list(zip(fids, names))
+        """
+
+        features: List[Tuple[str, int, str]] = []
+        max_complexity: int = 0
+        sum_complexity: int = 0
+        for feature in list(self._dlplan_policy.get_booleans()) + list(self._dlplan_policy.get_numericals()):
+            fid: str = feature.get_key()
+            complexity: int = feature.get_element().compute_complexity()
+            decoded: str = self.decode_feature(str(feature.get_element()))
+            features.append((fid, complexity, decoded))
+            max_complexity = max(max_complexity, complexity)
+            sum_complexity += complexity
 
         if logger:
             for line in sketch_lines:
@@ -640,11 +653,10 @@ class SketchReduced:
             #logging.info(str(self._dlplan_policy))
             logging.info(f"Numer of sketch rules: {len(self._dlplan_policy.get_rules())}")
             logging.info(f"Number of selected features: {len(self._dlplan_policy.get_booleans()) + len(self._dlplan_policy.get_numericals())}")
-            logging.info(f"Maximum complexity of selected feature: {max([0] + [boolean.get_element().compute_complexity() for boolean in self._dlplan_policy.get_booleans()] + [numerical.get_element().compute_complexity() for numerical in self._dlplan_policy.get_numericals()])}")
+            logging.info(f"Complexity of selected features: max={max_complexity}, sum={sum_complexity}")
 
-            for feature_type, features in features.items():
-                for fid, feature in features:
-                    logging.info(f"Feature f{fid}: {self.decode_feature(feature)}")
+            for fid, complexity, decoded in features:
+                logging.info(f"Feature {fid}/{complexity}: {decoded}")
 
         else:
             for line in sketch_lines:
@@ -652,5 +664,8 @@ class SketchReduced:
             #print(str(self._dlplan_policy))
             print(f"Numer of sketch rules: {len(self._dlplan_policy.get_rules())}")
             print(f"Number of selected features: {len(self._dlplan_policy.get_booleans()) + len(self._dlplan_policy.get_numericals())}")
-            print(f"Maximum complexity of selected feature: {max([0] + [boolean.get_element().compute_complexity() for boolean in self._dlplan_policy.get_booleans()] + [numerical.get_element().compute_complexity() for numerical in self._dlplan_policy.get_numericals()])}")
+            print(f"Complexity of selected features: max={max_complexity}, sum={sum_complexity}")
+
+            for fid, complexity, decoded in features:
+                print(f"Feature {fid}/{complexity}: {decoded}")
 
