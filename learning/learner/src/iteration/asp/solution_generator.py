@@ -322,6 +322,13 @@ class Node:
 
 
 class SolutionGenerator:
+    # Statistics
+    _layers: List[List[int]] = []
+    _num_generated: List[int] = []
+    _num_expanded: List[int] = []
+    _num_terminals: List[int] = []
+    _num_solutions: List[int] = []
+
     def __init__(self, preprocessing_data: Dict[str, Any], state_factory: StateFactory, **kwargs):
         self._preprocessing_data: Dict[str, Any] = preprocessing_data
         self._state_factory: StateFactory = state_factory
@@ -342,10 +349,6 @@ class SolutionGenerator:
 
         # Rule viewer
         self._viewer: RuleViewer = self._preprocessing_data.get("rule_viewer")
-
-        # Node statistics
-        self._num_generated: int = None
-        self._num_expanded: int = None
 
         # Construct requirements, one per ex-edge and one per pair of goal and non-goal xstates
         self._annotated_requirements: List[Tuple[Dict[str, Any], intbitset]] = []
@@ -388,31 +391,46 @@ class SolutionGenerator:
 
     def _node_generator(self, branch_selection_heuristic: Callable[Node, str], **kwargs) -> Generator[Node, None, None]:
         def _rec_generator(depth: int, node: Node, cost_bound: int, prune_solutions_with_cost_bound: bool = True) -> Generator[Node, None, int]:
+            self._num_generated[-1] += 1
             next_cost_bound: int = int(1e6)
             if node.is_terminal():
+                self._num_terminals[-1] += 1
                 if not prune_solutions_with_cost_bound or node._cost == cost_bound:
+                    self._num_solutions[-1] += 1
                     yield node
             else:
-                self._num_expanded += 1
+                self._num_expanded[-1] += 1
                 successors, next_cost_bound = node.get_successors(branch_selection_heuristic, self._viewer, cost_bound, **kwargs)
                 # TODO: make get_successors() to be generator as there could be many successors
                 for successor in successors:
-                    self._num_generated += 1
                     ncb: int = yield from _rec_generator(1 + depth, successor, cost_bound, prune_solutions_with_cost_bound)
                     next_cost_bound = min(next_cost_bound, ncb)
             return next_cost_bound
 
-        self._num_generated: int = 0
-        self._num_expanded: int = 0
-
         Node.initialize(self._width, self._ext_state_to_ext_edge, self._ext_state_to_feature_valuations, self._k_reachable)
         max_cost_bound: int = kwargs.get("max_cost_bound", 100)
+
+        self._layers.append([])
+        self._num_generated.append(0)
+        self._num_expanded.append(0)
+        self._num_terminals.append(0)
+        self._num_solutions.append(0)
+        last_num_generated: int = 0
+        last_num_expanded: int = 0
+        last_num_terminals: int = 0
+        last_num_solutions: int = 0
+
         if True:
             cost_bound: int = 0
             while cost_bound <= max_cost_bound:
-                logging.info(f"Cost bound: {cost_bound} (max={max_cost_bound})")
+                self._layers[-1].append(cost_bound)
                 next_cost_bound: int = yield from _rec_generator(0, Node.get_root_node(), cost_bound)
-                cost_bound = next_cost_bound
+                logging.info(f"Cost-layer: cost={cost_bound}, #generated={self._num_generated[-1] - last_num_generated}, #expanded={self._num_expanded[-1] - last_num_expanded}, #terminals={self._num_terminals[-1] - last_num_terminals}, #solutions={self._num_solutions[-1] - last_num_solutions}")
+                last_num_generated: int = self._num_generated[-1]
+                last_num_expanded: int = self._num_expanded[-1]
+                last_num_terminals: int = self._num_terminals[-1]
+                last_num_solutions: int = self._num_solutions[-1]
+                cost_bound: int = next_cost_bound
         else:
             yield from _rec_generator(0, Node.get_root_node(), max_cost_bound, prune_solutions_with_cost_bound=False)
 
@@ -421,23 +439,27 @@ class SolutionGenerator:
         def _one_solution(depth: int, node: Node, cost_bound: int) -> Generator[Node, None, int]:
             if node.is_terminal():
                 if node._cost <= cost_bound:
+                    self._solutions[-1] += 1
                     yield node
                     return node._cost
             else:
-                self._num_expanded += 1
+                self._num_expanded[-1] += 1
                 successors, next_cost_bound = node.get_successors(branch_selection_heuristic, self._viewer, cost_bound, **kwargs)
                 # TODO: make get_successors() to be generator as there could be many successors
                 for successor in successors:
-                    self._num_generated += 1
+                    self._num_generated[-1] += 1
                     cost: int = yield from _one_solution(1 + depth, successor, cost_bound)
                     if cost > 0: return cost
             return -1
 
-        self._num_generated: int = 0
-        self._num_expanded: int = 0
-
         Node.initialize(self._width, self._ext_state_to_ext_edge, self._ext_state_to_feature_valuations, self._k_reachable)
         max_cost_bound: int = kwargs.get("max_cost_bound", 100)
+
+        self._num_generated.append(0)
+        self._num_expanded.append(0)
+        self._num_terminals.append(0)
+        self._num_solutions.append(0)
+
         cost: int = yield from _one_solution(0, Node.get_root_node(), max_cost_bound)
         while cost > 0:
             cost: int = yield from _one_solution(0, Node.get_root_node(), cost - 1)
@@ -470,7 +492,7 @@ class SolutionGenerator:
         # Generate solutions in increasing order of cost
         max_num_solutions: int = kwargs.get("max_num_solutions", 100)
         for i, node in enumerate(self._node_generator(branch_selection_heuristic_1, **kwargs)):
-            logging.debug(f"Got {node}")
+            logging.debug(f"Got node {node}")
             r_idx_to_info: Dict[int, Tuple[int, intbitset]] = node.get_r_idx_to_info(self._viewer)
 
             # Finalize policy
@@ -479,8 +501,20 @@ class SolutionGenerator:
             # Yield solution
             yield (solution, sorted(r_idx_to_info.keys()), cost, decorations)
             if i + 1 == max_num_solutions: break
-        logging.info(f"Nodes: #expanded={self._num_expanded}, #generated={self._num_generated}")
+        logging.debug(f"Nodes: #expanded={self._num_expanded}, #generated={self._num_generated}")
 
     def __call__(self, **kwargs) -> Generator[Any, None, None]:
         yield from self._solutions(**kwargs)
+
+    @classmethod
+    def get_node_statistics(cls) -> Dict[str, Any]:
+        return {
+            "searches": len(cls._layers),
+            "num_layers": [len(layer) for layer in cls._layers],
+            "layers": list(cls._layers),
+            "generated": list(cls._num_generated),
+            "expanded": list(cls._num_expanded),
+            "terminals": list(cls._num_terminals),
+            "solutions": list(cls._num_solutions),
+        }
 

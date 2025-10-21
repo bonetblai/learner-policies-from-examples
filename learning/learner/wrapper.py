@@ -15,6 +15,7 @@ from .src.state_space import PDDLInstance
 from .src.preprocessing import InstanceData
 from .src.iteration import compute_feature_valuations_for_dlplan_state
 from .src.iteration import IterationData, Statistics, SketchReduced, D2sepDlplanPolicyFactory
+from .src.iteration import SolutionGenerator
 
 
 class WrapperBase:
@@ -41,7 +42,7 @@ class WrapperBase:
         self._ext_state_to_dlplan_state_index: Dict[Tuple[int, int], int] = {ext_state: dlplan_state_index for ext_state, dlplan_state_index in self._benchmark._ext_state_to_dlplan_state_index.items()}
         self._instance_idx_to_denotations_caches: Dict[int, dlplan_core.DenotationsCaches] = self._benchmark._instance_idx_to_denotations_caches
 
-    def set_ext_state(self, instance_idx: int, state_idx: int):
+    def setup_ext_state(self, instance_idx: int, state_idx: int):
         instance_data: PDDLInstance = self._instance_datas[instance_idx]
         ext_state: Tuple[int, int] = (instance_idx, state_idx)
         if ext_state not in self._ext_state_to_dlplan_state_index:
@@ -157,11 +158,11 @@ class Wrapper(WrapperBase):
 
             # Setup information for relevant vertices and successors
             for state_idx in relevant_vertices:
-                self.set_ext_state(instance_idx, state_idx)
+                self.setup_ext_state(instance_idx, state_idx)
                 if not instance_data.is_goal_state(state_idx):
                     successors: List[Tuple[Tuple[int, Any], str]] = instance_data.get_successors(state_idx)
                     for (succ_state_idx, succ_state), operator in successors:
-                        self.set_ext_state(instance_idx, succ_state_idx)
+                        self.setup_ext_state(instance_idx, succ_state_idx)
 
         self._timers.stop("preprocessing")
         self._timers.resume("learner")
@@ -353,6 +354,9 @@ class WrapperEnumeration(WrapperBase):
     def __init__(self, benchmark: Benchmark, feature_pool: FeaturePool, learner: Any, timers: Statistics, **kwargs):
         super().__init__(benchmark, feature_pool, learner, timers, **kwargs)
 
+    def _get_node_statistics(self) -> Dict[str, Any]:
+        return SolutionGenerator.get_node_statistics()
+
     def _solutions(self, iteration_data: IterationData, **kwargs) -> Generator[Tuple[List[int], Set[Any], int], None, None]:
         # Relevant vertices must be those in example paths, deadend paths, and non-covered vertices
         for instance_idx, relevant_vertices in iteration_data.relevant_vertices.items():
@@ -368,12 +372,14 @@ class WrapperEnumeration(WrapperBase):
             instance_data: PDDLInstance = self._instance_datas[instance_idx]
 
             # Setup information for relevant vertices and successors
+            logging.info("HOLA.0")
             for state_idx in relevant_vertices:
-                self.set_ext_state(instance_idx, state_idx)
+                self.setup_ext_state(instance_idx, state_idx)
                 if not instance_data.is_goal_state(state_idx):
                     successors: List[Tuple[Tuple[int, Any], str]] = instance_data.get_successors(state_idx)
                     for (succ_state_idx, succ_state), operator in successors:
-                        self.set_ext_state(instance_idx, succ_state_idx)
+                        self.setup_ext_state(instance_idx, succ_state_idx)
+            logging.info("HOLA.1")
         self._timers.stop("preprocessing")
 
         yield from self._learner.solutions(**kwargs)
@@ -416,6 +422,8 @@ class WrapperEnumeration(WrapperBase):
 
                     if len(unsolved_instances) == 0:
                         logging.info(colored(f"Sketch SOLVES ALL {len(self._instance_datas)} instance(s)! [Bundle: {iteration_data.paths_with_idx}]", "blue"))
+                        node_statistics: Dict[str, Any] = self._get_node_statistics()
+                        logging.info(f"Statistics: {node_statistics}")
                         return sketch, None
                 else:
                     failed_training_instances.append(solution_idx)
@@ -459,6 +467,13 @@ class WrapperEnumeration(WrapperBase):
                         iteration_data.relevant_vertices[instance_idx] |= vertices_in_deadend_path
                         logging.info(f"Adding {vertices_in_deadend_path} to relevant_vertices")
                         """
+
+            # There are no more solutions, either because ran out of resources (i.e., #solutions or max cost bound),
+            # or there is not sufficient expressivity in pool of features
+            # TODO: CHECK CASE
+
+            node_statistics: Dict[str, Any] = self._get_node_statistics()
+            logging.info(f"Statistics: {node_statistics}")
 
             # If no solution, return to outer loop
             if len(solution_idx_to_unsolved_instances) == 0:
