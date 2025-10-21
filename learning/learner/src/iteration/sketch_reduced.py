@@ -26,9 +26,9 @@ class SketchReduced:
 
     def _get_width_successors(self, instance_data: InstanceData, state_idx: int) -> List[Tuple[Tuple[int, Any], str]]:
         if self._width == 0:
-            successors: List[Tuple[Tuple[int, Any], str]] = instance_data.get_successors(state_idx)
+            successors: List[Tuple[Tuple[int, Any], str]] = [((succ_state_idx, succ_state), action) for (succ_state_idx, succ_state), action in instance_data.get_successors(state_idx) if succ_state_idx != state_idx]
         else:
-            successors: List[int] = list(instance_data.explore(state_idx, self._width, caching=True))
+            successors: List[int] = list(instance_data.explore(state_idx, self._width, caching=True) - intbitset([state_idx]))
             successors: List[Tuple[Tuple[int, Any], str]] = [(instance_data.get_state(succ_state_idx), "<not-avail>") for succ_state_idx in successors]
         logging.debug(f"[_get_width_successors] ext_state={(instance_data.idx, state_idx)}, width={self._width}, #successors={len(successors)}")
         return successors
