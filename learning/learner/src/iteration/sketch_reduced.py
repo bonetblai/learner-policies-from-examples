@@ -40,11 +40,6 @@ class SketchReduced:
                                          randomized_sketch_test: int,
                                          max_non_covered_ext_states: int,
                                          **kwargs) -> Tuple[bool, Dict[int, Set[int]], Dict[str, Any]]:
-        debug = kwargs.get("debug", False)
-        logging_level = logging.root.level
-        new_logging_level = logging.DEBUG if debug else logging_level
-        logging.root.setLevel(new_logging_level)
-
         logging.debug(f"VERIFY WIDTH: INSTANCE_INDEX: {instance_data.idx}")
 
         queue: Deque[int] = deque()
@@ -94,9 +89,7 @@ class SketchReduced:
                 logging.debug(colored(f"VERIFY WIDTH: GOAL state: instance_idx={instance_data.idx}, {root_state_idx}.{root_dlplan_state}", "red"))
                 continue
 
-            logging.root.setLevel(logging_level)
             is_deadend: bool = instance_data.is_deadend_state(root_state_idx)
-            logging.root.setLevel(new_logging_level)
 
             if is_deadend:
                 logging.info(colored(f"Sketch reaches DEADEND for {instance_data.instance_filepath()}/{instance_data.idx}, {root_state_idx}.{root_dlplan_state}", "red"))
@@ -108,7 +101,6 @@ class SketchReduced:
                 state_idx_path = list(reversed(state_idx_path))
                 for state_idx in state_idx_path:
                     logging.debug(colored(f"    {state_idx}.{instance_data.get_dlplan_state(*instance_data.get_state(state_idx))}", "red"))
-                logging.root.setLevel(logging_level)
                 reason: Dict[str, Any] = {"deadend": tuple([(instance_data.idx, state_idx) for state_idx in state_idx_path])}
                 return False, None, reason
 
@@ -158,7 +150,6 @@ class SketchReduced:
                 state_idx_path = list(reversed(state_idx_path))
                 for state_idx in state_idx_path:
                     logging.debug(colored(f"    {state_idx}.{instance_data.get_dlplan_state(*instance_data.get_state(state_idx))}", "red"))
-                logging.root.setLevel(logging_level)
                 reason: Dict[str, Any] = {"deadend": tuple([(instance_data.idx, state_idx) for state_idx in state_idx_path])}
                 return False, None, reason
 
@@ -173,22 +164,18 @@ class SketchReduced:
                     break
 
         if len(non_closed_ext_states) > 0:
-            logging.root.setLevel(logging_level)
             reason: Dict[str, Any] = {"non-closed": non_closed_ext_states}
             return False, None, reason
         elif len(non_sound_ext_states) > 0:
-            logging.root.setLevel(logging_level)
             reason: Dict[str, Any] = {"non-sound": non_sound_ext_states}
             return False, None, reason
         else:
             logging.debug(colored(f"Sketch has BOUNDED WIDTH on {instance_data.instance_filepath()}/{instance_data.idx}", "blue"))
-            logging.root.setLevel(logging_level)
             return True, subgoal_states_per_r_reachable_state, None
 
     def _verify_acyclicity(self,
                            instance_data: InstanceData,
-                           r_compatible_successors: Dict[int, int],
-                           state_factory: Optional[Any] = None) -> Tuple[bool, Dict[str, Set[Tuple[int, int]]]]:
+                           r_compatible_successors: Dict[int, int]) -> Tuple[bool, Dict[str, Set[Tuple[int, int]]]]:
         """
         Returns True iff sketch is acyclic, i.e., no infinite trajectories s1,s2,... are possible.
         """
@@ -225,14 +212,15 @@ class SketchReduced:
                                 logging.info(colored(f"Sketch CYCLES on {instance_data.instance_filepath()}/{instance_data.idx}", "red"))
                                 logging.info(f"state_idxs in cycle: {list(state_idxs_in_path)}")
                                 logging.info(f"Path (cyclic): {state_idx_path}")
-                                if state_factory is not None:
-                                    logging.info(f"Transitions:")
-                                    for src_state_idx, dst_state_idx in zip(state_idx_path[:-1], state_idx_path[1:]):
-                                        src_dlplan_state = state_factory.get_dlplan_state(instance_data.idx, src_state_idx)
-                                        dst_dlplan_state = state_factory.get_dlplan_state(instance_data.idx, dst_state_idx)
-                                        rule = self._dlplan_policy.evaluate(src_dlplan_state, dst_dlplan_state)
-                                        logging.info(f"    {(src_state_idx, dst_state_idx)}: {rule}")
-                                        assert rule is not None
+
+                                logging.info(f"Transitions:")
+                                for src_state_idx, dst_state_idx in zip(state_idx_path[:-1], state_idx_path[1:]):
+                                    src_dlplan_state = self._state_factory.get_dlplan_state(instance_data.idx, src_state_idx)
+                                    dst_dlplan_state = self._state_factory.get_dlplan_state(instance_data.idx, dst_state_idx)
+                                    rule = self._dlplan_policy.evaluate(src_dlplan_state, dst_dlplan_state)
+                                    logging.info(f"    {(src_state_idx, dst_state_idx)}: {rule}")
+                                    assert rule is not None
+
                                 assert False, "CYCLE"
                                 return False, {"cycle": {(instance_data.idx, state_idx) for state_idx in state_idxs_in_path}}
                             elif state_prime_idx not in state_idxs_generated:
@@ -346,7 +334,7 @@ class SketchReduced:
             if not goal_separation:
                 return False, None
 
-        status, reason = self._verify_acyclicity(instance_data, subgoal_states_per_r_reachable_state, kwargs.get("state_factory"))
+        status, reason = self._verify_acyclicity(instance_data, subgoal_states_per_r_reachable_state)
         assert not status or reason is None
         if not status:
             return False, reason
@@ -646,7 +634,7 @@ class SketchReduced:
             features.append((fid, complexity, decoded))
             max_complexity = max(max_complexity, complexity)
             sum_complexity += complexity
-        features: List[Tuple[int, int, str]] = sorted(features)
+        features: List[Tuple[int, int, str]] = sorted(features, key=lambda t: t[1])
 
         if logger:
             for line in sketch_lines:
