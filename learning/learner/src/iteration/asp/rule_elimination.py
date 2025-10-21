@@ -9,7 +9,7 @@ from intbitset import intbitset
 
 from pathlib import Path
 from termcolor import colored
-from typing import Set, Tuple, List, Union, Dict, Any, Optional, Union
+from typing import Set, Tuple, List, Union, Dict, Any, Optional, Union, Generator
 from collections import OrderedDict, defaultdict, deque
 from itertools import product
 
@@ -21,6 +21,7 @@ from ...state_space import StateFactory
 
 from .rule_viewer import RuleViewer
 from .policy_finalizer import PolicyFinalizer
+from .solution_generator import SolutionGenerator
 
 
 def _partition_r_idxs_with_f_idx(r_idxs: intbitset, f_idx: int, viewer: RuleViewer) -> Dict[Tuple[Tuple[int, int]], intbitset]:
@@ -79,34 +80,6 @@ class RuleElimination:
         std_block_sizes: float = -np.std(block_sizes) if num_blocks > 0 else 0
         monotone_by_dec: int = 1 if self._viewer.is_monotone(f_idx, monotone_only_by_dec=True) else 0
         return (monotone_by_dec, len(r_idxs_to_remove) / feature_complexity, 1 if f_idx in chosen else 0, num_blocks, std_block_sizes) #, -feature_complexity)
-
-    def solve(self, **kwargs) -> Any:
-        # Reset rule viewer
-        self._viewer.reset()
-
-        # Policy finalizer
-        finalizer_options: Dict[str, Any] = {
-            "simplify_policy": kwargs.get("simplify_policy"),
-            "threshold_for_asp_based_simplification": kwargs.get("threshold_for_asp_based_simplification", 12),
-            "simplify_only_conditions": kwargs.get("simplify_only_conditions", False), # for naive simplification
-        }
-        finalizer: PolicyFinalizer = PolicyFinalizer(self._preprocessing_data, self._viewer._r_idx_to_ext_state, self._viewer._ext_state_to_r_idx, self._annotated_requirements)
-
-        # TODO: Fix error for zenotravel3
-        # TODO: Prefer numerical over boolean features
-        # TODO: backtrack when failing to find a feature
-        logging.warning(colored("TODO: backtrack when failing to find a feature", "magenta", attrs=["bold"]))
-        #assert False
-
-        # Calculate features that "eliminate" all rules with greedy solver
-        r_idx_to_info: Dict[int, Tuple[int, intbitset]] = dict()
-        f_idxs = self._rec_solve([], intbitset(), intbitset(), r_idx_to_info, **kwargs)
-
-        # Finalize policy
-        solution, cost, decorations = finalizer(f_idxs, r_idx_to_info, **finalizer_options)
-
-        # Return
-        return True, solution, [cost], decorations, None
 
     def _rec_solve(self,
                    branch: List[int],
@@ -188,4 +161,37 @@ class RuleElimination:
 
         logging.info(f"[_rec_solve]:{indent_str} solution={list(solution)}")
         return solution
+
+    def solve(self, **kwargs) -> Any:
+        # Reset rule viewer
+        self._viewer.reset()
+
+        # Policy finalizer
+        finalizer_options: Dict[str, Any] = {
+            "simplify_policy": kwargs.get("simplify_policy"),
+            "threshold_for_asp_based_simplification": kwargs.get("threshold_for_asp_based_simplification", 12),
+            "simplify_only_conditions": kwargs.get("simplify_only_conditions", False), # for naive simplification
+            "solve_pending_requirements": kwargs.get("solve_pending_requirements", False),
+        }
+        finalizer: PolicyFinalizer = PolicyFinalizer(self._preprocessing_data, self._viewer._r_idx_to_ext_state, self._viewer._ext_state_to_r_idx, self._annotated_requirements)
+
+        # TODO: Fix error for zenotravel3
+        # TODO: Prefer numerical over boolean features
+        # TODO: backtrack when failing to find a feature
+        logging.warning(colored("TODO: backtrack when failing to find a feature", "magenta", attrs=["bold"]))
+        #assert False
+
+        # Calculate features that "eliminate" all rules with greedy solver
+        r_idx_to_info: Dict[int, Tuple[int, intbitset]] = dict()
+        f_idxs = self._rec_solve([], intbitset(), intbitset(), r_idx_to_info, **kwargs)
+
+        # Finalize policy
+        solution, cost, decorations = finalizer(f_idxs, r_idx_to_info, **finalizer_options)
+
+        # Return
+        return True, solution, [cost], decorations, None
+
+    def solutions(self, **kwargs) -> Generator[Any, None, None]:
+        generator: SolutionGenerator = SolutionGenerator(self._preprocessing_data, self._state_factory, **kwargs)
+        yield from generator(**kwargs)
 

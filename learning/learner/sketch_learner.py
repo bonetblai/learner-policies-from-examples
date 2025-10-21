@@ -199,6 +199,9 @@ def sketch_learner(
         "max_non_covered_ext_states": 1,
         "randomized_sketch_test": randomized_sketch_test,
         "test_goal_separating_features": False,
+        "solve_pending_requirements": True,
+        "max_num_solutions": 500,
+        "max_cost_bound": 100,
     }
     WrapperClass = WrapperEnumeration if enumerate_solutions else Wrapper
     wrapper: WrapperBase = WrapperClass(benchmark, feature_pool, learner, timers, **wrapper_options)
