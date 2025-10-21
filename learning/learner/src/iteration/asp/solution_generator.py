@@ -254,6 +254,8 @@ class Node:
     def is_terminal(self) -> bool:
         if self._width == 0:
             return self.is_full_tree()
+        elif self.is_full_tree():
+            return True
         else:
             # A node is terminal iff GOALS == TERMINI where GOALS determined by example paths,
             # and TERMINI = { s : (s0,s) \in Kleene such that s \notin \pre(T) }
