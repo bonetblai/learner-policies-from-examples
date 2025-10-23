@@ -280,64 +280,6 @@ class GreedySolver:
         decorations: Dict[str, Dict[int, Dict[int, intbitset]]] = policy.calculate_decorations(self._simplify_only_conditions)
         return decorations
 
-    def _rec_descend(self, depth: int, depth_bound: int, incumbent_terminating_set: intbitset, incumbent_cost: int, pending_requirements: intbitset) -> Tuple[intbitset, int]:
-        logging.info(f"dfs: {'  ' * depth}incumbent_terminating_set={sorted(incumbent_terminating_set)}, cost={incumbent_cost}, {len(pending_requirements)} pending requirement(s)")
-
-        if len(pending_requirements) == 0:
-            return incumbent_terminating_set, incumbent_cost
-        elif depth_bound is not None and depth >= depth_bound:
-            return None, incumbent_cost
-
-        eligible_features: List[int] = list(self._m_pairs.f_idxs_for_g_idxs(incumbent_terminating_set))
-        eligible_features_with_scores: List[Tuple[int, float]] = [(f_idx, self._simple_score_fn(f_idx, pending_requirements)) for f_idx in eligible_features]
-        eligible_features_with_non_zero_scores: List[Tuple[int, float]] = [(f_idx, score) for f_idx, score in eligible_features_with_scores if score > 0]
-        sorted_eligible_features_with_scores: List[Tuple[int, float]] = sorted(eligible_features_with_non_zero_scores, key=lambda item: item[1], reverse=True)
-
-        for f_idx, score in sorted_eligible_features_with_scores:
-            feature_index: int = self._f_idx_to_feature_index[f_idx]
-            feature_cost: int = self._relevant_features[feature_index][1].complexity
-            incumbent_terminating_set.add(f_idx)
-            f_idx_pending_requirements: intbitset = pending_requirements - intbitset([i for i in pending_requirements if f_idx in self._requirements[i]])
-            terminating_set, cost = self._rec_descend(1 + depth, depth_bound, incumbent_terminating_set, incumbent_cost + feature_cost, f_idx_pending_requirements)
-            if terminating_set is not None: return terminating_set, cost
-            incumbent_terminating_set.remove(f_idx)
-
-        # No solution below this branch
-        return None, incumbent_cost
-
-    # Solver that recursively descend search tree looking for a terminating set that solves all requirements
-    # It can be used with "lazy" m_pairs
-    def dfs_solve(self, **kwargs) -> Tuple[bool, intbitset, int, Dict[str, Dict[int, Dict[int, intbitset]]], int]:
-        local_timer: Timer = Timer()
-
-        # Other arguments
-        optimality: bool = kwargs.get("optimality", False)
-        depth_bound: int = kwargs.get("depth_bound")
-
-        # Obtain solution by exploring search tree with recursive descend
-        terminating_set, cost = self.rec_descend(0, depth_bound, intbitset(), 0, intbitset(range(len(self._requirements))))
-        assert terminating_set is not None
-
-        # Calculate rank of selected features
-        feature_ranks: Dict[int, int] = self._calculate_ranks(terminating_set)
-        logging.info(f"Ranks: {sorted([(f_idx, rank) for f_idx, rank in feature_ranks.items()], key=lambda item: item[1])}")
-        assert self._does_it_solve_requirements(terminating_set, feature_ranks, verbose=True)
-
-        # Simplify set of selected features
-        terminating_set: intbitset = self._simplify_terminating_set(terminating_set, feature_ranks)
-
-        # Calculate decorations
-        if self._simplify_policy:
-            assert self._num_requirements["Deadend"] == 0, "RULE SIMPLIFICATION NOT YET READY FOR DEADEND"
-            decorations: Dict[str, Dict[int, Dict[int, intbitset]]] = self._calculate_decorations(terminating_set, feature_ranks)
-            logging.info(f"Decorations: {decorations}")
-        else:
-            decorations: Dict[str, Dict[int, Dict[int, intbitset]]] = dict()
-
-        local_timer.stop()
-        logging.info(f"Greedy solver finished in {local_timer.get_elapsed_sec():0.2f} second(s)")
-        return True, terminating_set, [cost], decorations, feature_ranks
-
     # Solver that at each iteration solves a requiements. Number of iteration is thus bounded by number of requirements.
     def solve(self, **kwargs) -> Tuple[bool, intbitset, int, Dict[str, Dict[int, Dict[int, intbitset]]], int]:
         logging.info(f"Starting greedy solver...")
@@ -484,5 +426,12 @@ class GreedySolver:
 
         local_timer.stop()
         logging.info(f"Greedy solver finished in {local_timer.get_elapsed_sec():0.2f} second(s)")
-        return True, terminating_set, [cost], decorations, feature_ranks
+        return {
+            "cost": cost,
+            "solution": terminating_set,
+            "r_idxs": None,
+            "decorations": decorations,
+            "feature_ranks": feature_ranks,
+        }
+        #return True, terminating_set, [cost], decorations, feature_ranks
 
