@@ -428,10 +428,9 @@ class GreedySolver:
         logging.info(f"Greedy solver finished in {local_timer.get_elapsed_sec():0.2f} second(s)")
         return {
             "cost": cost,
-            "solution": terminating_set,
+            "solution": sorted(terminating_set),
             "r_idxs": None,
             "decorations": decorations,
             "feature_ranks": feature_ranks,
         }
-        #return True, terminating_set, [cost], decorations, feature_ranks
 
