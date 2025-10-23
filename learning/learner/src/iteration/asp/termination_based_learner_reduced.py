@@ -2,8 +2,6 @@ import os
 import logging
 import tempfile
 import numpy as np
-
-# Bitset-based unordered sets of unsigned integers
 from intbitset import intbitset
 
 from termcolor import colored
@@ -27,14 +25,11 @@ from .returncodes import ClingoExitCode
 
 from ...state_space import PDDLInstance, StateFactory, get_plan, get_plan_v2
 
-LIST_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
-
 from .m_pairs import MPairs
 from .rule_viewer import RuleViewer
 
 from .greedy_solver import GreedySolver
 from .rule_elimination import RuleElimination
-from .solution_generator import SolutionGenerator
 
 
 class TerminationBasedLearnerReduced:
