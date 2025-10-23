@@ -61,14 +61,17 @@ class WrapperBase:
                                iteration_data: IterationData,
                                instance_datas: List[PDDLInstance],
                                sketch: SketchReduced,
-                               stop_at_first_unsolved_instance: bool = False) -> List[Tuple[PDDLInstance, Any]]:
+                               **kwargs) -> List[Tuple[PDDLInstance, Any]]:
+        options: Dict[str, Any] = dict(self._options)
+        options.update(kwargs)
+
         unsolved_instances: List[Tuple[PDDLInstance, Any]] = []
         for instance_data in instance_datas:
-            solves, reason = sketch.solves(None, iteration_data, instance_data, **self._options)
+            solves, reason = sketch.solves(None, iteration_data, instance_data, **options)
             assert not solves or reason is None
             if not solves:
                 unsolved_instances.append((instance_data, reason))
-                if stop_at_first_unsolved_instance: break
+                if options.get("stop_at_first_unsolved_instance", True): break
         return unsolved_instances
 
     def get_initial_idxs(self) -> List[int]:
@@ -140,7 +143,7 @@ class Wrapper(WrapperBase):
     def __init__(self, benchmark: Benchmark, feature_pool: FeaturePool, learner: Any, timers: Statistics, **kwargs):
         super().__init__(benchmark, feature_pool, learner, timers, **kwargs)
 
-    def _inner_step(self, iteration_data: IterationData):
+    def _inner_step(self, iteration_data: IterationData) -> Dict[str, Any]:
         self._timers.resume("preprocessing")
 
         # Relevant vertices must be those in example paths, deadend paths, and non-covered vertices
@@ -174,13 +177,13 @@ class Wrapper(WrapperBase):
 
         # Solve
         try:
-            f_idxs, rules_with_decorations, cost = self._learner.solve(**self._options)
+            solution: Dict[str, Any] = self._learner.solve(**self._options)
         except RuntimeError as rt:
             logging.info(str(rt))
             self._timers.print(title="Finalizing due to RuntimeError exception...", logger=True)
             raise
 
-        return f_idxs, rules_with_decorations, cost
+        return solution
 
     def _inner_loop(self, iteration_data: IterationData) -> SketchReduced:
         # Inner loop, at each iteration one or more relevant vertices are added
@@ -190,63 +193,65 @@ class Wrapper(WrapperBase):
             iteration_data.inner_iterations += 1
             self._total_inner_iterations += 1
 
-            f_idxs, rules_with_decorations, cost = self._inner_step(iteration_data)
-            if f_idxs is not None:
-                # Create sketch from solution
-                dlplan_policy = D2sepDlplanPolicyFactory().make_dlplan_policy_from_rules_with_decorations(f_idxs, rules_with_decorations, self._policy_builder, iteration_data)
-                sketch = SketchReduced(self._benchmark._state_factory, dlplan_policy, self._width)
-                logging.info("Learned the following sketch:")
-                sketch.print(logger=True)
+            # Compute solution
+            solution: Dict[str, Any] = self._inner_step(iteration_data)
+            f_idxs: List[int] = solution.get("f_idxs")
+            rules_with_decorations: Set[dlplan_policy.Rule, FrozenSet[int], FrozenSet[int]] = solution.get("rules_with_decorations")
+            valuations_for_goals: List[Dict[int, int]] = solution.get("valuations_for_goals")
 
-                # Analyze learned sketch
-                self._timers.resume("verification")
-                logging.info(colored(f"Verifying learned sketch on TRAINING instances {iteration_data.current_idxs}...", "blue"))
-                unsolved_instances: List[Tuple[PDDLInstance, Any]] = self.get_unsolved_instances(iteration_data, iteration_data.instance_datas, sketch)
-                self._timers.stop("verification")
+            # Create sketch from solution
+            dlplan_policy = D2sepDlplanPolicyFactory().make_dlplan_policy_from_rules_with_decorations(f_idxs, rules_with_decorations, self._policy_builder, iteration_data)
+            sketch = SketchReduced(self._benchmark._state_factory, iteration_data.feature_pool, dlplan_policy, self._width)
+            logging.info("Learned the following sketch:")
+            sketch.print(logger=True)
 
-                if len(unsolved_instances) == 0:
-                    logging.info(f"Sketch SOLVES TRAINING instances {iteration_data.current_idxs}")
-                    return sketch
-                else:
-                    # Sketch doesn't solve the instance used for learning
-                    old_len = sum(map(lambda states: len(states), iteration_data.relevant_vertices.values()))
-                    #logging.info(f"Sketch doesn't solve an instance used for learning (idxs={[instance_idx for instance_idx, _ in bundle_with_idxs]}):")
-                    for instance_data, reason in unsolved_instances:
-                        logging.info(f"  {instance_data.instance_filepath()} (idx={instance_data.idx})")
-                        logging.info(f"  Reason: {reason}")
+            # Analyze learned sketch
+            self._timers.resume("verification")
+            logging.info(colored(f"Verifying learned sketch on TRAINING instances {iteration_data.current_idxs}...", "blue"))
+            unsolved_instances: List[Tuple[PDDLInstance, Any]] = self.get_unsolved_instances(iteration_data, iteration_data.instance_datas, sketch, **{"valuations_for_goals": valuations_for_goals})
+            self._timers.stop("verification")
 
-                        if "non-closed" in reason:
-                            for instance_idx, state_idx in reason.get("non-closed", []):
-                                if instance_idx in iteration_data.current_idxs:
-                                    iteration_data.non_covered_vertices[instance_idx].add(state_idx)
-                                    iteration_data.relevant_vertices[instance_idx].add(state_idx)
-                                    logging.info(f"Adding ext_state {(instance_idx, state_idx)} to non-covered vertices")
-                                else:
-                                    unsolved_idxs.add(instance_idx)
-                        elif "non-sound" in reason:
-                            for instance_idx, state_idx in reason.get("non-sound", []):
-                                if instance_idx in iteration_data.current_idxs:
-                                    iteration_data.non_covered_vertices[instance_idx].add(state_idx)
-                                    iteration_data.relevant_vertices[instance_idx].add(state_idx)
-                                    logging.info(f"Adding ext_state {(instance_idx, state_idx)} to non-covered vertices")
-                                else:
-                                    unsolved_idxs.add(instance_idx)
-                        elif "deadend" in reason:
-                            if not self._options.get("deadends", False): logging.warning(f"WARNING: DEADEND reached even though 'deadends=False'")
-                            deadend_path: Tuple[Tuple[int, int]] = reason.get("deadend")
-                            logging.info(f"{len(iteration_data.deadend_paths)} deadend path(s); paths={iteration_data.deadend_paths}")
-                            assert deadend_path is not None and deadend_path not in iteration_data.deadend_paths
-                            iteration_data.deadend_paths.append(deadend_path)
-
-                            instance_idx = deadend_path[0][0]
-                            vertices_in_deadend_path: Set[int] = set([state_idx for _, state_idx in deadend_path])
-                            iteration_data.vertices_in_deadend_paths[instance_idx] |= vertices_in_deadend_path
-                            iteration_data.relevant_vertices[instance_idx] |= vertices_in_deadend_path
-                            logging.info(f"Adding {vertices_in_deadend_path} to relevant_vertices")
-                        else:
-                            raise RuntimeError(f"Unknown reason: {reason}")
+            if len(unsolved_instances) == 0:
+                logging.info(f"Sketch SOLVES TRAINING instances {iteration_data.current_idxs}")
+                return sketch
             else:
-                return None
+                # Sketch doesn't solve the instance used for learning
+                old_len = sum(map(lambda states: len(states), iteration_data.relevant_vertices.values()))
+                #logging.info(f"Sketch doesn't solve an instance used for learning (idxs={[instance_idx for instance_idx, _ in bundle_with_idxs]}):")
+                for instance_data, reason in unsolved_instances:
+                    logging.info(f"  {instance_data.instance_filepath()} (idx={instance_data.idx})")
+                    logging.info(f"  Reason: {reason}")
+
+                    if "non-closed" in reason:
+                        for instance_idx, state_idx in reason.get("non-closed", []):
+                            if instance_idx in iteration_data.current_idxs:
+                                iteration_data.non_covered_vertices[instance_idx].add(state_idx)
+                                iteration_data.relevant_vertices[instance_idx].add(state_idx)
+                                logging.info(f"Adding ext_state {(instance_idx, state_idx)} to non-covered vertices")
+                            else:
+                                unsolved_idxs.add(instance_idx)
+                    elif "non-sound" in reason:
+                        for instance_idx, state_idx in reason.get("non-sound", []):
+                            if instance_idx in iteration_data.current_idxs:
+                                iteration_data.non_covered_vertices[instance_idx].add(state_idx)
+                                iteration_data.relevant_vertices[instance_idx].add(state_idx)
+                                logging.info(f"Adding ext_state {(instance_idx, state_idx)} to non-covered vertices")
+                            else:
+                                unsolved_idxs.add(instance_idx)
+                    elif "deadend" in reason:
+                        if not self._options.get("deadends", False): logging.warning(f"WARNING: DEADEND reached even though 'deadends=False'")
+                        deadend_path: Tuple[Tuple[int, int]] = reason.get("deadend")
+                        logging.info(f"{len(iteration_data.deadend_paths)} deadend path(s); paths={iteration_data.deadend_paths}")
+                        assert deadend_path is not None and deadend_path not in iteration_data.deadend_paths
+                        iteration_data.deadend_paths.append(deadend_path)
+
+                        instance_idx = deadend_path[0][0]
+                        vertices_in_deadend_path: Set[int] = set([state_idx for _, state_idx in deadend_path])
+                        iteration_data.vertices_in_deadend_paths[instance_idx] |= vertices_in_deadend_path
+                        iteration_data.relevant_vertices[instance_idx] |= vertices_in_deadend_path
+                        logging.info(f"Adding {vertices_in_deadend_path} to relevant_vertices")
+                    else:
+                        raise RuntimeError(f"Unknown reason: {reason}")
 
     def _outer_loop(self) -> Tuple[SketchReduced, List[IterationData]]:
         self._total_inner_iterations: int = 0
@@ -299,7 +304,7 @@ class Wrapper(WrapperBase):
                 # Verify whether sketch solves all instances in benchmark
                 self._timers.resume("verification")
                 logging.info(colored("Verifying learned sketch on ALL instances...", "blue"))
-                unsolved_instances: List[Tuple[PDDLInstance, Any]] = self.get_unsolved_instances(iteration_data, self._instance_datas, sketch, stop_at_first_unsolved_instance=True)
+                unsolved_instances: List[Tuple[PDDLInstance, Any]] = self.get_unsolved_instances(iteration_data, self._instance_datas, sketch)
                 self._timers.stop("verification")
 
                 if len(unsolved_instances) == 0:
@@ -397,20 +402,25 @@ class WrapperEnumeration(WrapperBase):
 
             failed_training_instances: List[int] = []
             solution_idx_to_unsolved_instances: List[List[Tuple[PDDLInstance, Any]]] = []
-            for solution_idx, (f_idxs, rules_with_decorations, cost) in enumerate(self._solutions(iteration_data)):
-                logging.info(colored(f"Got solution {solution_idx}: cost={cost}, f_idxs={f_idxs}", "green"))
+            #for solution_idx, (f_idxs, rules_with_decorations, cost) in enumerate(self._solutions(iteration_data)):
+            for solution_idx, solution in enumerate(self._solutions(iteration_data)):
+                f_idxs: List[int] = solution.get("f_idxs")
+                rules_with_decorations: Set[dlplan_policy.Rule, FrozenSet[int], FrozenSet[int]] = solution.get("rules_with_decorations")
+                valuations_for_goals: List[Dict[int, int]] = solution.get("valuations_for_goals")
+
+                logging.info(colored(f"Got solution {solution_idx}: cost={solution.get('cost')}, f_idxs={f_idxs}", "green"))
                 assert f_idxs is not None
 
                 # Create sketch from solution
                 dlplan_policy = D2sepDlplanPolicyFactory().make_dlplan_policy_from_rules_with_decorations(f_idxs, rules_with_decorations, self._policy_builder, iteration_data)
-                sketch = SketchReduced(self._benchmark._state_factory, dlplan_policy, self._width)
+                sketch = SketchReduced(self._benchmark._state_factory, iteration_data.feature_pool, dlplan_policy, self._width)
                 logging.info("Sketch:")
                 sketch.print(logger=True)
 
                 # Analyze learned sketch
                 self._timers.resume("verification")
                 logging.info(colored(f"Verifying learned sketch on TRAINING instances {iteration_data.current_idxs}...", "blue"))
-                unsolved_instances: List[Tuple[PDDLInstance, Any]] = self.get_unsolved_instances(iteration_data, iteration_data.instance_datas, sketch)
+                unsolved_instances: List[Tuple[PDDLInstance, Any]] = self.get_unsolved_instances(iteration_data, iteration_data.instance_datas, sketch, **{"valuations_for_goals": valuations_for_goals})
                 self._timers.stop("verification")
 
                 if len(unsolved_instances) == 0:
@@ -419,7 +429,7 @@ class WrapperEnumeration(WrapperBase):
                     # Verify whether sketch solves all instances in benchmark
                     self._timers.resume("verification")
                     logging.info(colored("Verifying learned sketch on ALL instances...", "blue"))
-                    unsolved_instances: List[Tuple[PDDLInstance, Any]] = self.get_unsolved_instances(iteration_data, self._instance_datas, sketch, stop_at_first_unsolved_instance=True)
+                    unsolved_instances: List[Tuple[PDDLInstance, Any]] = self.get_unsolved_instances(iteration_data, self._instance_datas, sketch, **{"valuations_for_goals": valuations_for_goals})
                     self._timers.stop("verification")
 
                     if len(unsolved_instances) == 0:
