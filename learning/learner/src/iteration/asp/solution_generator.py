@@ -3,15 +3,12 @@ import logging
 import random
 import heapq
 import numpy as np
-
-# Bitset-based unordered sets of unsigned integers
 from intbitset import intbitset
 
 from pathlib import Path
 from termcolor import colored
 from typing import Set, FrozenSet, Tuple, List, Union, Dict, Any, Optional, Union, Callable, Generator
-from collections import OrderedDict, defaultdict, deque
-from itertools import product
+from collections import defaultdict
 
 import dlplan.core as dlplan_core
 
@@ -20,11 +17,7 @@ from ..feature_pool import Feature
 from ...util import Timer
 
 from .rule_viewer import RuleViewer
-from .policy_finalizer import PolicyFinalizer
-from .asp_solver import ASPSolver
 from .transitive_closure import TransitiveClosure
-
-LIST_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _partition_r_idxs_with_f_idx(r_idxs: intbitset, f_idx: int, viewer: RuleViewer, boolean_projection: bool = True) -> Dict[Tuple[Tuple[int, int]], intbitset]:
@@ -91,7 +84,7 @@ class Node:
         successor._num_tips -= 1
         if g_idx not in successor._f_idxs:
             successor._f_idxs.add(g_idx)
-            successor._cost += viewer.f_idx_to_feature(g_idx).complexity
+            successor._cost += viewer.f_idx_to_feature(g_idx).complexity - 1
 
         # Remove rules that change g_idx
         rules_that_change_g_idx: intbitset = viewer.r_idxs_that_change(g_idx)
@@ -275,7 +268,7 @@ class Node:
         list_removed_rules: List[intbitset] = self._remove_rules_for_branch(branch, viewer, restore_rules=False)
 
         # Calculate monotone features for branch
-        splits: Set[Any] = set()
+        splits: Set[FrozenSet] = set()
         successors: List["Node"] = []
         monotone_g_idxs: intbitset = viewer.monotone_features(kwargs.get("monotone_only_by_dec", False))
 
@@ -284,12 +277,12 @@ class Node:
         # 2) prune g_idxs that result in the same "split" (which is calculated with plain valuations and not boolean valuations)
         next_cost_bound: int = int(1e6)
         lower_bound = self._cost #+ (self._num_tips - 1) * viewer._min_complexity # Cannot add this term as tips can be resolved with features already included in node at no further cost
-        for cost, g_idx in sorted([(viewer.f_idx_to_feature(g_idx).complexity, g_idx) for g_idx in monotone_g_idxs]):
+        for cost, g_idx in sorted([(viewer.f_idx_to_feature(g_idx).complexity - 1, g_idx) for g_idx in monotone_g_idxs]):
             if g_idx in self._f_idxs or cost_bound is None or lower_bound + cost <= cost_bound:
                 r_idxs_that_change_g_idx: intbitset = viewer.r_idxs_that_change(g_idx)
                 if len(r_idxs_that_change_g_idx) > 0:
                     partition: Dict[Tuple[Tuple[int, int]], intbitset] = _partition_r_idxs_with_f_idx(viewer.r_idxs() - r_idxs_that_change_g_idx, g_idx, viewer, boolean_projection=False)
-                    split: Any = frozenset(partition.values())
+                    split: FrozenSet = frozenset(partition.values())
                     if split not in splits:
                         heapq.heappush(successors, self._create_successor(branch, g_idx, viewer))
                         splits.add(split)
@@ -468,13 +461,13 @@ class SolutionGenerator:
 
     def _solutions(self, **kwargs) -> Generator[Any, None, None]:
         # Branch selection heuristic: select a tip with greatest number of r_idxs
-        def branch_selection_heuristic_1(node: Node) -> str:
+        def _branch_selection_heuristic_1(node: Node) -> str:
             branches_with_score: List[Tuple[str, int]] = [(branch, node._branch_to_num_r_idxs.get(branch)) for branch, f_idx in node._branch_to_f_idx.items() if f_idx == -1]
             sorted_branches_with_score: List[Tuple[str, int]] = sorted(branches_with_score, key=lambda p: p[1], reverse=True)
             return None if len(sorted_branches_with_score) == 0 else sorted_branches_with_score[0][0]
 
         # Branch selection heuristic: select a shallowest tip
-        def branch_selection_heuristic_2(node: Node) -> str:
+        def _branch_selection_heuristic_2(node: Node) -> str:
             branches_with_score: List[Tuple[str, int]] = [(branch, len(branch)) for branch, f_idx in node._branch_to_f_idx.items() if f_idx == -1]
             sorted_branches_with_score: List[Tuple[str, int]] = sorted(branches_with_score, key=lambda p: p[1], reverse=False)
             return None if len(sorted_branches_with_score) == 0 else sorted_branches_with_score[0][0]
@@ -482,26 +475,11 @@ class SolutionGenerator:
         # Reset rule viewer
         self._viewer.reset()
 
-        # Policy finalizer
-        finalizer_options: Dict[str, Any] = {
-            "simplify_policy": kwargs.get("simplify_policy"),
-            "threshold_for_asp_based_simplification": kwargs.get("threshold_for_asp_based_simplification", 12),
-            "simplify_only_conditions": kwargs.get("simplify_only_conditions", False), # for naive simplification
-            "solve_pending_requirements": kwargs.get("solve_pending_requirements", False),
-        }
-        finalizer: PolicyFinalizer = PolicyFinalizer(self._preprocessing_data, self._viewer._r_idx_to_ext_state, self._viewer._ext_state_to_r_idx, self._annotated_requirements)
-
         # Generate solutions in increasing order of cost
         max_num_solutions: int = kwargs.get("max_num_solutions", 100)
-        for i, node in enumerate(self._node_generator(branch_selection_heuristic_1, **kwargs)):
+        for i, node in enumerate(self._node_generator(_branch_selection_heuristic_1, **kwargs)):
             logging.info(f"Got node {node}")
-            r_idx_to_info: Dict[int, Tuple[int, intbitset]] = node.get_r_idx_to_info(self._viewer)
-
-            # Finalize policy
-            solution, cost, decorations = finalizer(node._f_idxs, r_idx_to_info, **finalizer_options)
-
-            # Yield solution
-            yield (solution, sorted(r_idx_to_info.keys()), cost, decorations)
+            yield node._f_idxs, node.get_r_idx_to_info(self._viewer)
             if i + 1 == max_num_solutions: break
         logging.debug(f"Nodes: #expanded={self._num_expanded}, #generated={self._num_generated}")
 

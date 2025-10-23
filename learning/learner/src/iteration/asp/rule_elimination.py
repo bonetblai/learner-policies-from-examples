@@ -70,9 +70,18 @@ class RuleElimination:
         self._num_requirements: Dict[str, int] = {key: sum([1 if annotation.get("key") == key else 0 for annotation, _ in self._annotated_requirements]) for key in ["Edge", "Goal", "Deadend", "Sibling"]}
         logging.info(f"{len(self._requirements)} requirement(s) split as {self._num_requirements}")
 
+        # Policy finalizer
+        self._finalizer_options: Dict[str, Any] = {
+            "simplify_policy": kwargs.get("simplify_policy"),
+            "simplify_only_conditions": kwargs.get("simplify_only_conditions", False), # for naive simplification
+            "threshold_for_asp_based_simplification": kwargs.get("threshold_for_asp_based_simplification", 12),
+            "solve_pending_requirements": kwargs.get("solve_pending_requirements", False),
+        }
+        self._finalizer: PolicyFinalizer = PolicyFinalizer(self._preprocessing_data, self._viewer._r_idx_to_ext_state, self._viewer._ext_state_to_r_idx, self._annotated_requirements)
+
     def _score_fn(self, f_idx: int, chosen: intbitset) -> Tuple[Union[int, float]]:
         feature_index: int = self._f_idx_to_feature_index[f_idx]
-        feature_complexity: int = self._relevant_features[feature_index][1].complexity
+        feature_complexity: int = self._relevant_features[feature_index][1].complexity - 1
         r_idxs_to_remove: intbitset = intbitset([r_idx for r_idx in self._viewer.r_idxs() if f_idx in self._viewer.f_idxs_changed_by(r_idx)])
         partition: Dict[Tuple[Tuple[int, int]], intbitset] = _partition_r_idxs_with_f_idx(self._viewer.r_idxs(), f_idx, self._viewer)
         block_sizes: List[int] = [len(block - r_idxs_to_remove) for _, block in partition.items() if len(block - r_idxs_to_remove) > 0]
@@ -123,7 +132,7 @@ class RuleElimination:
         best_f_idxs: List[Tuple[int]] = [f_idx for f_idx, score in sorted_eligible_features if score == sorted_eligible_features[0][1]]
         best_f_idx: int = random.choice(best_f_idxs)
         best_score: Tuple[float] = self._score_fn(best_f_idx, chosen)
-        complexity: int = self._relevant_features[self._f_idx_to_feature_index[best_f_idx]][1].complexity
+        complexity: int = self._relevant_features[self._f_idx_to_feature_index[best_f_idx]][1].complexity - 1
         r_idxs_to_remove: intbitset = intbitset([r_idx for r_idx in r_idxs if best_f_idx in self._viewer.f_idxs_changed_by(r_idx)])
         partition: Dict[Tuple[Tuple[int, int]], intbitset] = _partition_r_idxs_with_f_idx(r_idxs, best_f_idx, self._viewer)
         logging.info(f"[_rec_solve_v1]:{indent_str}    f{best_f_idx}.{self._relevant_features[self._f_idx_to_feature_index[best_f_idx]][1]._dlplan_feature}/{complexity}, score={best_score}, r_idxs_to_remove={r_idxs_to_remove}, partition={[len(block - r_idxs_to_remove) for block in partition.values()]}")
@@ -184,7 +193,7 @@ class RuleElimination:
 
         # Try eligible feature in order by score, returning first solution found
         for f_idx, score in sorted_eligible_features:
-            complexity: int = self._relevant_features[self._f_idx_to_feature_index[f_idx]][1].complexity
+            complexity: int = self._relevant_features[self._f_idx_to_feature_index[f_idx]][1].complexity - 1
             r_idxs_to_remove: intbitset = intbitset([r_idx for r_idx in r_idxs if f_idx in self._viewer.f_idxs_changed_by(r_idx)])
             partition: Dict[Tuple[Tuple[int, int]], intbitset] = _partition_r_idxs_with_f_idx(r_idxs, f_idx, self._viewer)
             logging.info(f"[_rec_solve_v2]:{indent_str}    f{f_idx}.{self._relevant_features[self._f_idx_to_feature_index[f_idx]][1]._dlplan_feature}/{complexity}, score={score}, r_idxs_to_remove={r_idxs_to_remove}, partition={[len(block - r_idxs_to_remove) for block in partition.values()]}")
@@ -235,10 +244,11 @@ class RuleElimination:
         logging.info(f"[_rec_solve_v2]:{indent_str} Backtrack")
         return None
 
-    def solve(self, **kwargs) -> Any:
+    def solve(self, **kwargs) -> Dict[str, Any]:
         # Reset rule viewer
         self._viewer.reset()
 
+        """
         # Policy finalizer
         finalizer_options: Dict[str, Any] = {
             "simplify_policy": kwargs.get("simplify_policy"),
@@ -247,6 +257,7 @@ class RuleElimination:
             "solve_pending_requirements": kwargs.get("solve_pending_requirements", False),
         }
         finalizer: PolicyFinalizer = PolicyFinalizer(self._preprocessing_data, self._viewer._r_idx_to_ext_state, self._viewer._ext_state_to_r_idx, self._annotated_requirements)
+        """
 
         # TODO: Fix error for zenotravel3
         # TODO: Prefer numerical over boolean features
@@ -258,12 +269,24 @@ class RuleElimination:
             raise RuntimeError("No solution for given features")
 
         # Finalize policy
-        solution, cost, decorations = finalizer(f_idxs, r_idx_to_info, **finalizer_options)
+        solution, cost, decorations = self._finalizer(f_idxs, r_idx_to_info, **self._finalizer_options)
 
         # Return
-        return True, solution, [cost], decorations, None
+        return {
+            "cost": cost,
+            "solution": sorted(solution),
+            "r_idxs": sorted(r_idx_to_info.keys()),
+            "decorations": decorations,
+        }
 
-    def solutions(self, **kwargs) -> Generator[Any, None, None]:
+    def solutions(self, **kwargs) -> Generator[Dict[str, Any], None, None]:
         generator: SolutionGenerator = SolutionGenerator(self._preprocessing_data, self._state_factory, **kwargs)
-        yield from generator(**kwargs)
+        for f_idxs, r_idx_to_info in generator(**kwargs):
+            solution, cost, decorations = self._finalizer(f_idxs, r_idx_to_info, **self._finalizer_options)
+            yield {
+                "cost": cost,
+                "solution": sorted(solution),
+                "r_idxs": sorted(r_idx_to_info.keys()),
+                "decorations": decorations,
+            }
 

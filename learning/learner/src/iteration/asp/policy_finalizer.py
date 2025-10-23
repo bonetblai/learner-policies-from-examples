@@ -49,15 +49,20 @@ class PolicyFinalizer:
         self._requirements: List[intbitset] = [requirement for _, requirement in self._annotated_requirements]
         self._requirements_for_goals: List[intbitset] = [requirement for annotation, requirement in self._annotated_requirements if annotation.get("key") == "Goal"]
 
-    def get_ext_state(self, r_idx: int) -> Tuple[int, int]:
+        # By product of asp-based calculation
+        self._solution: List[int] = None
+        self._feature_valuations_for_goals: Set[Tuple[Tuple[int, int]]] = None
+        self._feature_valuations_for_non_goals: Set[Tuple[Tuple[int, int]]] = None
+
+    def _get_ext_state(self, r_idx: int) -> Tuple[int, int]:
         return self._r_idx_to_ext_state[r_idx]
 
-    def get_r_idx(self, ext_state: Tuple[int, int]) -> int:
+    def _get_r_idx(self, ext_state: Tuple[int, int]) -> int:
         return self._ext_state_to_r_idx.get(ext_state)
 
     def _score_fn(self, f_idx: int, pending_requirements: List[int]) -> Tuple[Union[int, float]]:
         feature_index: int = self._f_idx_to_feature_index[f_idx]
-        feature_complexity: int = self._relevant_features[feature_index][1].complexity
+        feature_complexity: int = self._relevant_features[feature_index][1].complexity - 1
         solved_pending_requirements: List[int] = [i for i in pending_requirements if f_idx in self._requirements[i]]
         return (len(solved_pending_requirements) / feature_complexity,)
 
@@ -65,7 +70,7 @@ class PolicyFinalizer:
                                         solution: intbitset,
                                         r_idx_to_info: Dict[int, Tuple[int, intbitset]]) -> Tuple[ASPSolver, Dict[str, Any]]:
         # Features and transitions
-        features: List[int] = sorted(solution)
+        self._solution: List[int] = sorted(solution)
         transitions: List[Tuple[int, Tuple[int, int]]] = []
         transitions_good: intbitset = intbitset()
         transitions_bad: intbitset = intbitset()
@@ -76,7 +81,7 @@ class PolicyFinalizer:
         tr_idx_to_r_idx: List[int] = []
         for tr_idx, r_idx in enumerate(r_idx_to_info.keys()):
             tr_idx_to_r_idx.append(r_idx)
-            ext_state: Tuple[int, int] = self.get_ext_state(r_idx)
+            ext_state: Tuple[int, int] = self._get_ext_state(r_idx)
             ext_edge: Tuple[int, Tuple[int, int]] = self._ext_state_to_ext_edge.get(ext_state)
             assert ext_state is not None and ext_edge is not None
             assert ext_edge not in transitions_r
@@ -120,7 +125,7 @@ class PolicyFinalizer:
             ext_state_src: Tuple[int, int] = (ext_edge[0], ext_edge[1][0])
             ext_state_dst: Tuple[int, int] = (ext_edge[0], ext_edge[1][1])
             for ext_state in [ext_state_src, ext_state_dst]:
-                valuations: np.ndarray = self._ext_state_to_feature_valuations.get(ext_state)[features]
+                valuations: np.ndarray = self._ext_state_to_feature_valuations.get(ext_state)[self._solution]
                 boolean_valuations: List[int] = [1 if value > 0 else 0 for value in valuations]
                 ext_state_to_valuations[ext_state] = valuations
                 ext_state_to_valuations_boolean[ext_state] = boolean_valuations
@@ -132,32 +137,32 @@ class PolicyFinalizer:
         goal_separating_features: List[int] = []
         pending_goal_requirements: List[int] = list(range(len(self._requirements_for_goals)))
         while len(pending_goal_requirements) > 0:
-            candidates: List[Tuple[int, int]] = [(i, sum([1 if f_idx in self._requirements_for_goals[j] else 0 for j in pending_goal_requirements])) for i, f_idx in enumerate(features)]
+            candidates: List[Tuple[int, int]] = [(i, sum([1 if f_idx in self._requirements_for_goals[j] else 0 for j in pending_goal_requirements])) for i, f_idx in enumerate(self._solution)]
             candidates_sorted: List[Tuple[int, int]] = sorted(candidates, key=lambda p: p[1], reverse=True)
             assert candidates_sorted[0][1] > 0
             goal_separating_features.append(candidates_sorted[0][0])
-            pending_goal_requirements: List[int] = [i for i in pending_goal_requirements if features[candidates_sorted[0][0]] not in self._requirements_for_goals[i]]
+            pending_goal_requirements: List[int] = [i for i in pending_goal_requirements if self._solution[candidates_sorted[0][0]] not in self._requirements_for_goals[i]]
 
-        feature_valuations_for_goals: Set[Tuple[Tuple[int, int]]] = set()
-        feature_valuations_for_non_goals: Set[Tuple[Tuple[int, int]]] = set()
+        self._feature_valuations_for_goals: Set[Tuple[Tuple[int, int]]] = set()
+        self._feature_valuations_for_non_goals: Set[Tuple[Tuple[int, int]]] = set()
         for pair in [annotation.get("pair") for annotation, _ in self._annotated_requirements if annotation.get("key") == "Goal"]:
             goal_ext_state: Tuple[int, int] = (pair[0], pair[1][0])
             non_goal_ext_state: Tuple[int, int] = (pair[0], pair[1][1])
             goal_boolean_valuation: Tuple[int] = ext_state_to_valuations_boolean.get(goal_ext_state)
             non_goal_boolean_valuation: Tuple[int] = ext_state_to_valuations_boolean.get(non_goal_ext_state)
             if non_goal_boolean_valuation is None:
-                # This can happen because set of transitions above doesn't not contain all the relevant transitions
-                valuations: np.ndarray = self._ext_state_to_feature_valuations.get(non_goal_ext_state)[features]
+                # This can happen because set of transitions above doesn't contain all the relevant transitions
+                valuations: np.ndarray = self._ext_state_to_feature_valuations.get(non_goal_ext_state)[self._solution]
                 boolean_valuations: List[int] = [1 if value > 0 else 0 for value in valuations]
                 ext_state_to_valuations[non_goal_ext_state] = valuations
                 ext_state_to_valuations_boolean[non_goal_ext_state] = boolean_valuations
                 non_goal_boolean_valuation = boolean_valuations
-            feature_valuations_for_goals.add(tuple([(i, goal_boolean_valuation[i]) for i in goal_separating_features]))
-            feature_valuations_for_non_goals.add(tuple([(i, non_goal_boolean_valuation[i]) for i in goal_separating_features]))
+            self._feature_valuations_for_goals.add(tuple([(i, goal_boolean_valuation[i]) for i in goal_separating_features]))
+            self._feature_valuations_for_non_goals.add(tuple([(i, non_goal_boolean_valuation[i]) for i in goal_separating_features]))
 
-        if len(feature_valuations_for_goals & feature_valuations_for_non_goals) > 0:
-            logging.warning(f"Non-empty intersection of feature valuations for goal and non-goal states: {feature_valuations_for_goals & feature_valuations_for_non_goals}")
-        logging.debug(f"feature_valuations_for_goals: {sorted(feature_valuations_for_goals)}")
+        if len(self._feature_valuations_for_goals & self._feature_valuations_for_non_goals) > 0:
+            logging.warning(f"Non-empty intersection of feature valuations for goal and non-goal states: {self._feature_valuations_for_goals & self._feature_valuations_for_non_goals}")
+        logging.info(f"feature_valuations_for_goals: features={self._solution}, valuations={sorted(self._feature_valuations_for_goals)}")
 
         # Construct solver
         fact_signatures: List[Tuple[Any]] = [
@@ -180,7 +185,7 @@ class PolicyFinalizer:
         facts: Dict[str, List[Any]] = defaultdict(list)
 
         # Contruct facts for feature/1, transition/1, fixed/2, sibling/2, bad/1, source/3, change/3, yield/1, value/3, goal/1
-        for f_idx in features:
+        for f_idx in self._solution:
             facts["feature/1"].append(asp_solver.make_fact("feature", f_idx))
             if f_idx not in self._numerical_f_idxs:
                 facts["feature/1"].append(asp_solver.make_fact("boolean", f_idx))
@@ -192,10 +197,10 @@ class PolicyFinalizer:
             ext_state_src: Tuple[int, int] = (ext_edge[0], ext_edge[1][0])
             boolean_valuations: List[int] = ext_state_to_valuations_boolean.get(ext_state_src)
             changes: List[str] = tr_idx_to_changes[tr_idx]
-            for i, f_idx in enumerate(features):
-                facts["source/3"].append(asp_solver.make_fact("source", tr_idx, features[i], boolean_valuations[i]))
+            for i, f_idx in enumerate(self._solution):
+                facts["source/3"].append(asp_solver.make_fact("source", tr_idx, f_idx, boolean_valuations[i]))
             for i, change in enumerate(changes):
-                facts["change/3"].append(asp_solver.make_fact("change", tr_idx, features[i], change))
+                facts["change/3"].append(asp_solver.make_fact("change", tr_idx, self._solution[i], change))
 
         # fixed/2
         for tr_idx in transitions_good:
@@ -215,10 +220,10 @@ class PolicyFinalizer:
                 ext_state_src: Tuple[int, int] = (sibling[0], sibling[1][0])
                 boolean_valuations: List[int] = ext_state_to_valuations_boolean.get(ext_state_src)
                 changes: List[str] = tr_idx_to_changes[sibling_idx]
-                for i, f_idx in enumerate(features):
+                for i, f_idx in enumerate(self._solution):
                     facts["source/3"].append(asp_solver.make_fact("source", sibling_idx, f_idx, boolean_valuations[i]))
                 for i, change in enumerate(changes):
-                    facts["change/3"].append(asp_solver.make_fact("change", sibling_idx, features[i], change))
+                    facts["change/3"].append(asp_solver.make_fact("change", sibling_idx, self._solution[i], change))
 
         # bad/1
         for tr_idx in transitions_bad:
@@ -227,18 +232,19 @@ class PolicyFinalizer:
             ext_state_src: Tuple[int, int] = (ext_edge[0], ext_edge[1][0])
             boolean_valuations: List[int] = ext_state_to_valuations_boolean.get(ext_state_src)
             changes: List[str] = tr_idx_to_changes[tr_idx]
-            for i, f_idx in enumerate(features):
+            for i, f_idx in enumerate(self._solution):
                 facts["source/3"].append(asp_solver.make_fact("source", tr_idx, f_idx, boolean_valuations[i]))
             for i, change in enumerate(changes):
-                facts["change/3"].append(asp_solver.make_fact("change", tr_idx, features[i], change))
+                facts["change/3"].append(asp_solver.make_fact("change", tr_idx, self._solution[i], change))
 
         # yield/1, value/3, and goal/1
-        for i, _yield in enumerate(product(*[(0, 1) for _ in features])):
+        for i, _yield in enumerate(product(*[(0, 1) for _ in self._solution])):
             facts["yield/1"].append(asp_solver.make_fact("yield", i))
-            for j, f_idx in enumerate(features):
+            for j, f_idx in enumerate(self._solution):
                 facts["value/3"].append(asp_solver.make_fact("value", i, f_idx, _yield[j]))
-            if any([all([_yield[j] == value for j, value in feature_valuation]) for feature_valuation in feature_valuations_for_goals]):
+            if any([all([_yield[j] == value for j, value in feature_valuation]) for feature_valuation in self._feature_valuations_for_goals]):
                 facts["goal/1"].append(asp_solver.make_fact("goal", i))
+                logging.info(f"GOAL: yield={_yield}")
 
         return asp_solver, facts, transitions
 
@@ -282,13 +288,13 @@ class PolicyFinalizer:
                                      solution: intbitset,
                                      r_idx_to_info: Dict[int, Tuple[int, intbitset]],
                                      **kwargs) -> Dict[str, Dict[int, Dict[int, intbitset]]]:
-        assert False, "CHECK: need to revise naive simplification assuring that only 'active' rules are considered, not all of them"
+        #assert False, "CHECK: need to revise naive simplification assuring that only 'active' rules are considered, not all of them"
         # Necessary f_idxs
         r_idx_to_necessary_f_idxs: Dict[int, List[intbitset]] = defaultdict(list)
         for annotation, requirement in self._annotated_requirements:
             if annotation["key"] == "Deadend":
                 ext_state: Tuple[int, int] = annotation["ext_state"]
-                r_idx: int = self.get_r_idx(ext_state)
+                r_idx: int = self._get_r_idx(ext_state)
                 assert r_idx is not None
                 necessary_f_idxs: intbitset = requirement & solution
                 assert len(necessary_f_idxs) > 0
@@ -301,7 +307,7 @@ class PolicyFinalizer:
         decorations: Dict[str, Dict[int, Dict[int, intbitset]]] = {"dont_care": defaultdict(lambda: defaultdict(intbitset)), "unknown": defaultdict(lambda: defaultdict(intbitset))}
         for r_idx, (f_idx, above) in r_idx_to_info.items():
             singleton: intbitset = intbitset([f_idx])
-            instance_idx, state_idx = self.get_ext_state(r_idx)
+            instance_idx, state_idx = self._get_ext_state(r_idx)
             assert instance_idx not in decorations["unknown"] or state_idx not in decorations["unknown"][instance_idx]
             assert instance_idx not in decorations["dont_care"] or state_idx not in decorations["dont_care"][instance_idx]
             f_idxs_to_remove: intbitset = solution - above - singleton
@@ -320,7 +326,7 @@ class PolicyFinalizer:
 
     def _solve_pending_requirements(self, f_idxs: intbitset) -> Tuple[intbitset, intbitset]:
         solution: intbitset = intbitset(f_idxs)
-        pending_requirements: List[int] = [i for i, requirement in enumerate(self._requirements) if len(requirement & solution) == 0]
+        pending_requirements: List[int] = [i for i, (annotation, requirement) in enumerate(self._annotated_requirements) if annotation["key"] != "Edge" and len(requirement & solution) == 0]
         while len(pending_requirements) > 0:
             logging.debug(f"[_solve_pending_requirements] pending_requirements: {pending_requirements}")
             eligible_features_with_score: List[Tuple[int, Tuple[float]]] = [(f_idx, self._score_fn(f_idx, pending_requirements)) for f_idx, _ in self._relevant_features if f_idx not in solution]
@@ -332,7 +338,7 @@ class PolicyFinalizer:
                 for annotation, requirement in [self._annotated_requirements[i] for i in pending_requirements]:
                     if annotation["key"] == "Edge":
                         ext_state: Tuple[int, int] = annotation["ext_state"]
-                        r_idx: int = self.get_r_idx(ext_state)
+                        r_idx: int = self._get_r_idx(ext_state)
                         logging.info(f"  Unexpected pending requirement: key='Edge', ext_state={ext_state}, r_idx={r_idx}")
                         logging.info(f"    This should have detected during rule elimination by _rec_solve")
                     elif annotation["key"] == "Goal":
@@ -353,11 +359,11 @@ class PolicyFinalizer:
             best_f_idxs: List[Tuple[int]] = [f_idx for f_idx, score in sorted_eligible_features if score == sorted_eligible_features[0][1]]
             best_f_idx: int = random.choice(best_f_idxs)
             best_score: Tuple[float] = self._score_fn(best_f_idx, pending_requirements)
-            complexity: int = self._relevant_features[self._f_idx_to_feature_index[best_f_idx]][1].complexity
+            complexity: int = self._relevant_features[self._f_idx_to_feature_index[best_f_idx]][1].complexity - 1
             logging.info(f"[_solve_pending_requirements] f{best_f_idx}.{self._relevant_features[self._f_idx_to_feature_index[best_f_idx]][1]._dlplan_feature}/{complexity}, score={best_score}")
 
             solution.add(best_f_idx)
-            pending_requirements_reduced: List[int] = [i for i in pending_requirements if len(self._requirements[i] & solution) == 0]
+            pending_requirements_reduced: List[int] = [i for i in pending_requirements if len(self._annotated_requirements[i][1] & solution) == 0]
             assert len(pending_requirements_reduced) < len(pending_requirements)
             pending_requirements = pending_requirements_reduced
 
@@ -366,6 +372,7 @@ class PolicyFinalizer:
 
         return solution, solution - f_idxs
 
+    # This is the inteded "external access point" (API)
     def __call__(self, f_idxs: intbitset, r_idx_to_info: Dict[int, Tuple[int, intbitset]], **kwargs) -> Tuple[intbitset, Dict[str, Dict[int, Dict[int, intbitset]]]]:
         # Solve pending requirements
         if kwargs.get("solve_pending_requirements", False):
@@ -377,7 +384,7 @@ class PolicyFinalizer:
         else:
             solution = f_idxs
 
-        cost: int = sum([self._relevant_features[self._f_idx_to_feature_index[f_idx]][1].complexity for f_idx in solution])
+        cost: int = sum([self._relevant_features[self._f_idx_to_feature_index[f_idx]][1].complexity - 1 for f_idx in solution])
         logging.info(f"Solution {sorted(solution)} has cost {cost}")
 
         # Decorations
