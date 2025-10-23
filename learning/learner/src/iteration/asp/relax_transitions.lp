@@ -124,11 +124,11 @@ triggers(G, Y)    :- good(G), yield(Y), value(Y, F, V) : feature(F), condition(G
 
 % Soft optimization
 
-#maximize { 1@50, soundness, G     : sound(G) }.
-#maximize { 1@40,   closure, G     : closed(G) }.
-#minimize { 1@30,     class, G     : class(G) }.
-#maximize { 1@20,   unknown, G, F  : effect(G, F, 0) }.
-#maximize { 1@10,  dontcare, G, F  : condition(G, F, 0) }.
+#minimize { 1@50,     class, G     : class(G) }.
+#maximize { 1@40,   closure, G     : class(G), closed(G) }.
+#maximize { 1@30, soundness, G     : class(G), sound(G) }.
+#maximize { 1@20,   unknown, G, F  : class(G), effect(G, F, 0) }.
+#maximize { 1@10,  dontcare, G, F  : class(G), condition(G, F, 0) }.
 
 % ==== Show ====
 
