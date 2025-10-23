@@ -270,6 +270,7 @@ class RuleElimination:
 
         # Finalize policy
         solution, cost, decorations = self._finalizer(f_idxs, r_idx_to_info, **self._finalizer_options)
+        valuations_for_goals: List[Dict[int, int]] = [{self._finalizer._solution[i]: value for i, value in valuation} for valuation in self._finalizer._feature_valuations_for_goals]
 
         # Return
         return {
@@ -277,16 +278,19 @@ class RuleElimination:
             "solution": sorted(solution),
             "r_idxs": sorted(r_idx_to_info.keys()),
             "decorations": decorations,
+            "valuations_for_goals": valuations_for_goals,
         }
 
     def solutions(self, **kwargs) -> Generator[Dict[str, Any], None, None]:
         generator: SolutionGenerator = SolutionGenerator(self._preprocessing_data, self._state_factory, **kwargs)
         for f_idxs, r_idx_to_info in generator(**kwargs):
             solution, cost, decorations = self._finalizer(f_idxs, r_idx_to_info, **self._finalizer_options)
+            valuations_for_goals: List[Dict[int, int]] = [{self._finalizer._solution[i]: value for i, value in valuation} for valuation in self._finalizer._feature_valuations_for_goals]
             yield {
                 "cost": cost,
                 "solution": sorted(solution),
                 "r_idxs": sorted(r_idx_to_info.keys()),
                 "decorations": decorations,
+                "valuations_for_goals": valuations_for_goals,
             }
 

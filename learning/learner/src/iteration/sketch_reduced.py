@@ -6,12 +6,14 @@ from collections import defaultdict, deque
 from termcolor import colored
 from typing import Dict, Set, FrozenSet, List, Deque, MutableSet, Tuple, Any, Optional
 from pathlib import Path
+import numpy as np
 from intbitset import intbitset
 
 import dlplan.core as dlplan_core
 import dlplan.policy as dlplan_policy
 from dlplan.policy import PolicyMinimizer
 
+from .feature_pool import Feature
 from .iteration_data import IterationData
 from ..preprocessing import PreprocessingData, InstanceData
 from ..state_space import StateFactory
@@ -19,10 +21,31 @@ from ..util import Timer
 
 
 class SketchReduced:
-    def __init__(self, state_factory: StateFactory, dlplan_policy: dlplan_policy.Policy, width: int):
+    def __init__(self, state_factory: StateFactory, feature_pool: List[Feature], dlplan_policy: dlplan_policy.Policy, width: int):
         self._state_factory: StateFactory = state_factory
+        self._feature_pool: List[Feature] = feature_pool
         self._dlplan_policy = dlplan_policy
         self._width = width
+
+    def _values_satisfy_condition(self, values: Dict[int, int], condition: Dict[int, int]) -> bool:
+        for f_idx, bvalue in condition.items():
+            value: int = values[f_idx]
+            if (bvalue == 0 and value > 0) or (bvalue == 1 and value == 0):
+                return False
+        return True
+
+    def _values_satisfy_conditions(self, values: Dict[int, int], conditions: List[Dict[int, int]]) -> bool:
+        for condition in conditions:
+            if self._values_satisfy_condition(values, condition):
+                return True
+        return False
+
+    def _state_satisfies_conditions(self, instance_data: InstanceData, state_idx: int, conditions: List[Dict[int, int]]) -> bool:
+        state: Any = instance_data.get_state(state_idx)[1]
+        dlplan_state: dlplan_core.State = instance_data.get_dlplan_state(state_idx, state)
+        f_idxs: Set[int] = set.union(*[set(condition.keys()) for condition in conditions])
+        values: Dict[int, int] = {f_idx: self._feature_pool[f_idx]._dlplan_feature.evaluate(dlplan_state) for f_idx in f_idxs}
+        return self._values_satisfy_conditions(values, conditions)
 
     def _get_width_successors(self, instance_data: InstanceData, state_idx: int) -> List[Tuple[Tuple[int, Any], str]]:
         if self._width == 0:
@@ -40,13 +63,16 @@ class SketchReduced:
                                          randomized_sketch_test: int,
                                          max_non_covered_ext_states: int,
                                          **kwargs) -> Tuple[bool, Dict[int, Set[int]], Dict[str, Any]]:
-        logging.debug(f"VERIFY WIDTH: INSTANCE_INDEX: {instance_data.idx}")
+        logging.debug(f"[VERIFY] INSTANCE_INDEX: {instance_data.idx}")
+
+        # Get valuations for goals (if any)
+        valuations_for_goals: List[Dict[int, int]] = kwargs.get("valuations_for_goals")
 
         queue: Deque[int] = deque()
         visited: MutableSet[int] = set()
         parent: Dict[int, int] = dict()
         for initial_state_idx, _ in [instance_data.get_initial_state()]:
-            logging.debug(f"VERIFY WIDTH: initial_state_idx={initial_state_idx}")
+            logging.debug(f"[VERIFY] initial_state_idx={initial_state_idx}")
             queue.append(initial_state_idx)
             visited.add(initial_state_idx)
             parent[initial_state_idx] = -1
@@ -76,18 +102,23 @@ class SketchReduced:
             if timers["search"].get_elapsed_sec() - last_record > reporting_period:
                 last_record = timers["search"].get_elapsed_sec()
                 elapsed_times: str = "(" + ", ".join([f"{timers[key].get_elapsed_sec():0.2f}" for key in ["search", "expansion", "successors"]]) + ")"
-                logging.info(f"VERIFY WIDTH: elapsed_times={elapsed_times}, expanded={expanded}, generated={generated}, #queue={len(queue)}")
+                logging.info(f"[VERIFY] elapsed_times={elapsed_times}, expanded={expanded}, generated={generated}, #queue={len(queue)}")
             timers["search"].resume()
 
             root_state_idx = queue.pop()
             _, root_state = instance_data.get_state(root_state_idx)
             root_dlplan_state = instance_data.get_dlplan_state(root_state_idx, root_state)
 
-            logging.debug(f"VERIFY WIDTH: DEQUED: {root_state_idx}.{root_dlplan_state}")
+            logging.debug(f"[VERIFY] DEQUED: {root_state_idx}.{root_dlplan_state}")
 
+            satisfies_valuations_for_goals: bool = None if valuations_for_goals is None else self._state_satisfies_conditions(instance_data, root_state_idx, valuations_for_goals)
             if instance_data.is_goal_state(root_state_idx):
-                logging.debug(colored(f"VERIFY WIDTH: GOAL state: instance_idx={instance_data.idx}, {root_state_idx}.{root_dlplan_state}", "red"))
+                logging.debug(colored(f"[VERIFY] GOAL state: instance_idx={instance_data.idx}, {root_state_idx}.{root_dlplan_state}", "red"))
+                if satisfies_valuations_for_goals is not None and not satisfies_valuations_for_goals:
+                    logging.warning(colored(f"[VERIFY] GOAL ext_state={(instance_data.idx, root_state_idx)} doesn't satisfy valuations for goals {valuations_for_goals}", "magenta"))
                 continue
+            elif satisfies_valuations_for_goals is not None and satisfies_valuations_for_goals:
+                logging.warning(colored(f"[VERIFY] NON-GOAL ext_state={(instance_idx, root_state_idx)} satisfies valuations for goals {valuations_for_goals}", "magenta"))
 
             is_deadend: bool = instance_data.is_deadend_state(root_state_idx)
 
@@ -120,13 +151,13 @@ class SketchReduced:
             num_alive_successors = 0
             for i, ((succ_state_idx, succ_state), action) in enumerate(successors):
                 succ_dlplan_state = instance_data.get_dlplan_state(succ_state_idx, succ_state)
-                logging.debug(f"VERIFY WIDTH:   SUCCESSOR: {succ_state_idx}.{succ_dlplan_state} [action={action}]")
+                logging.debug(f"[VERIFY]   SUCCESSOR: {succ_state_idx}.{succ_dlplan_state} [action={action}]")
 
                 # Is transition compatible with policy?
                 rule = self._dlplan_policy.evaluate(root_dlplan_state, succ_dlplan_state)
                 if rule is not None:
                     subgoal_states_per_r_reachable_state[root_state_idx].add(succ_state_idx)
-                    logging.debug(f"VERIFY WIDTH:               ADD: {root_state_idx} -> {succ_state_idx}")
+                    logging.debug(f"[VERIFY]               ADD: {root_state_idx} -> {succ_state_idx}")
                     logging.debug(f"                           RULE: {rule}")
                     if succ_state_idx not in visited:
                         visited.add(succ_state_idx)
@@ -141,7 +172,7 @@ class SketchReduced:
 
             # If no successors, this is a deadend state. It may fail above check as deadend check may be incomplete
             if len(successors) == 0:
-                logging.debug(colored(f"VERIFY WIDTH: DEADEND state is r_reachable (no successors): instance_idx={instance_data.idx}, {root_state_idx}.{root_dlplan_state}", "red"))
+                logging.debug(colored(f"[VERIFY] DEADEND state is r_reachable (no successors): instance_idx={instance_data.idx}, {root_state_idx}.{root_dlplan_state}", "red"))
                 state_idx_path: List[int] = []
                 state_idx = root_state_idx
                 while state_idx != -1:
@@ -179,7 +210,7 @@ class SketchReduced:
         """
         Returns True iff sketch is acyclic, i.e., no infinite trajectories s1,s2,... are possible.
         """
-        logging.debug(f"VERIFY ACYCLICITY: INSTANCE_INDEX: {instance_data.idx}")
+        logging.debug(f"[VERIFY ACYCLICITY] INSTANCE_INDEX: {instance_data.idx}")
 
         state_idxs_generated: Set[int] = set()
         for root_state_idx, successors in r_compatible_successors.items():
