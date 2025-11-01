@@ -6,6 +6,8 @@ from typing import Set, List, Tuple, MutableSet, Dict, Optional, Any, Generator
 
 import math, random
 import numpy as np
+
+from intbitset import intbitset
 from collections import defaultdict
 from pathlib import Path
 
@@ -222,6 +224,14 @@ class Benchmark:
 
     def get_dlplan_state(self, instance_idx: int, state_idx: int) -> dlplan_core.State:
         return self._state_factory.get_dlplan_state(instance_idx, state_idx)
+
+    def get_feature_valuations(self, instance_idx: int, state_idx: int, feature_pool: List[Any]) -> np.ndarray:
+        dlplan_state: dlplan_core.State = self.get_dlplan_state(instance_idx, state_idx)
+        feature_valuations: np.ndarray = compute_feature_valuations_for_dlplan_state(dlplan_state, feature_pool, self._instance_idx_to_denotations_caches)
+        return feature_valuations
+
+    def exploration(self, instance_idx: int, state_idx: int, width: int, caching: bool) -> intbitset:
+        return self._state_factory.exploration(instance_idx, state_idx, width, caching)
 
     def _preprocess_instance(self, folder_name: str, instance_idx: int, remove_files: bool = True) -> Dict[str, Any]:
         instance_data: PDDLInstance = self._state_factory._instances[instance_idx]
