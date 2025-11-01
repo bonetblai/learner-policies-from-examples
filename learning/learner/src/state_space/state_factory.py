@@ -606,11 +606,13 @@ class PDDLInstance:
         if caching: self._tuples_cache[(state_idx, width)] = tuples
         return tuples
 
-    def explore(self, root_idx: int, width: int, caching: bool = False) -> intbitset:
+    def exploration(self, root_idx: int, width: int, caching: bool = False) -> intbitset:
         # Revise cache
         generated: intbitset = self._explore_cache.get((root_idx, width), None)
         if generated is not None:
             return generated
+
+        logging.info(f"Exploration from {(self.idx, root_idx)} with width {width}")
 
         generated: intbitset = intbitset()
         seen_tuples: Set[intbitset] = set()
@@ -735,7 +737,6 @@ class StateFactory:
     def get_tuples(self, instance_idx: int, state_idx: int, width: int, caching: bool = False) -> FrozenSet[intbitset]:
         return self._instances[instance_idx].get_tuples(state_idx, width, caching)
 
-    def explore(self, instance_idx: int, root_idx: int, width: int, caching: bool = False) -> List[Any]:
-        logging.info(f"Width={width} exploration from {(instance_idx, root_idx)}")
-        return self._instances[instance_idx].explore(root_idx, width, caching)
+    def exploration(self, instance_idx: int, root_idx: int, width: int, caching: bool = False) -> List[Any]:
+        return self._instances[instance_idx].exploration(root_idx, width, caching)
 
