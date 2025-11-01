@@ -91,9 +91,14 @@
     "zenotravel3": {"domain": "learning/benchmarks/tractable/zenotravel3", "xrefs": ["args1"], "args": ["--deadends", "--randomized_sketch_test 2", "--instance_selection forward+"]},
     "zenotravel-group": {"group": ["zenotravel-1person", "zenotravel-1plane", "zenotravel-1plane-1person", "zenotravel", "zenotravel2", "zenotravel3"]},
 
-    "standard": {"group": ["8puzzle-group", "barman-group", "blocks-group", "childsnack-group", "delivery-group", "depot", "driverlog", "ferry", "freecell", "grid-group", "gripper", "hiking-group", "logistics-group", "logistics-group-20", "miconic", "reward", "rovers", "satellite", "sokoban-1stone-v3-7x7", "sokoban-1stone-v3-7x7-2", "spanner-group", "tetris-opt14-strips-no-costs", "tidybot-opt11-strips", "tpp", "visitall-group", "zenotravel-group"]},
-    "standard-simplify-only-conditions": {"group": ["standard"], "args": ["--simplify_only_conditions"]},
-    "kr2025": {"group": ["standard", "standard-simplify-only-conditions"]},
+    "standard": {"group": ["8puzzle-group", "barman-group", "blocks-group", "childsnack-group", "delivery-group", "depot", "driverlog", "ferry", "freecell", "grid-group", "gripper", "hiking-group", "logistics-group", "miconic", "reward", "rovers", "satellite", "sokoban-1stone-v3-7x7", "sokoban-1stone-v3-7x7-2", "spanner-group", "tetris-opt14-strips-no-costs", "tidybot-opt11-strips", "tpp", "visitall-group", "zenotravel-group"]},
+    "standard+": {"group": ["standard", "logistics-group-20"]},
+    "standard+-simplify-only-conditions": {"group": ["standard+"], "args": ["--simplify_only_conditions"]},
+    "kr2025": {"group": ["standard+", "standard+-simplify-only-conditions"]},
+
+    # Only compute features (intended to be used with --complexity_limit for computing/storing features)
+    "compute-features": {"group": ["standard"], "args": ["--force_features", "--features_only", "--store_features"], "time": "48:00:00"},
+    "compute-features-extended": {"group": ["compute-features"], "args": ["--extended_features"], "time": "48:00:00"},
 
     # Indexicals V3
     # Default arguments

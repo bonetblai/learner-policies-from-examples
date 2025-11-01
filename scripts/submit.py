@@ -160,15 +160,15 @@ if __name__ == "__main__":
             elif "group" in database.get(jname):
                 xrefs: List[str] = list(database.get(jname).get("xrefs", [])) + xrefs
                 args: List[str] = list(database.get(jname).get("args", [])) + args
-                time: str = database.get(jname).get("time") or time
-                mem: str = database.get(jname).get("mem") or mem
+                time: str = time or database.get(jname).get("time")
+                mem: str = mem or database.get(jname).get("mem")
                 for jspec in database.get(jname).get("group"):
                     q.append({"name": jspec, "xrefs": xrefs, "args": args, "time": time, "mem": mem})
             else:
                 xrefs: List[str] = list(database.get(jname).get("xrefs", [])) + xrefs
                 args: List[str] = list(database.get(jname).get("args", [])) + args
-                time: str = database.get(jname).get("time") or time
-                mem: str = database.get(jname).get("mem") or mem
+                time: str = time or database.get(jname).get("time")
+                mem: str = mem or database.get(jname).get("mem")
                 jdesc: Dict[str, Any] = {"name": jname}
                 jdesc.update(database.get(jname))
                 jdesc.update({"xrefs": xrefs, "args": args, "time": time, "mem": mem})
