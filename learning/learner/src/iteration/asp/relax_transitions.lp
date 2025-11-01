@@ -1,21 +1,24 @@
 % ==== Input ====
 
-#defined feature/1.      % feature(F).      [F is feature]
-#defined boolean/1.      % boolean(F).      [F is boolean feature]
-#defined good/1.         % good(G).         [G is good transition (example)]
-#defined bad/1.          % bad(B).          [B is bad transition]
-#defined other/1.        % other(X).        [X is non-bad transition]
-#defined sibling/2.      % sibling(G, S).   [S is sibling of good transition G]
-#defined fixed/2.        % fixed(G, F).     [F cannot be relaxed in good transition G]
-#defined source/3.       % source(X, F, V). [X is transition or bad; V=0 is false/eq, V=1 is true/gt]
-#defined change/3.       % change(X, F, C). [X is transition, sibling, or bad; C is "dec", "inc", or "eqv"]
-#defined yield/1.        % yield(Y).        [Y is a joint valuation for features that may result after a good transition]
-#defined yield/2.        % yield(G, Y).     [Y is a joint valuation for features that may result after good transition G]
-#defined value/3.        % value(Y, F, V).  [V=0 is false/eq, V=2 is true/gt]
-#defined goal/1.         % goal(Y)          [Y is goal yield]
+#defined feature/1.      % feature(F).       [F is feature]
+#defined boolean/1.      % boolean(F).       [F is boolean feature]
+#defined good/1.         % good(G).          [G is good transition (example)]
+#defined bad/1.          % bad(B).           [B is bad transition]
+#defined other/1.        % other(X).         [X is non-bad transition]
+#defined sibling/2.      % sibling(G, S).    [S is sibling of good transition G]
+#defined fixed/2.        % fixed(G, F).      [F cannot be relaxed in good transition G]
+#defined source/3.       % source(X, F, V).  [X is transition or bad; V=0 is false/eq, V=1 is true/gt]
+#defined change/3.       % change(X, F, C).  [X is transition, sibling, or bad; C is "dec", "inc", or "eqv"]
+#defined yield/1.        % yield(Y).         [Y is a joint valuation for features that may result after a good transition]
+#defined yield/2.        % yield(G, Y).      [Y is a joint valuation for features that may result after good transition G]
+#defined value/3.        % value(Y, F, V).   [V=0 is false/eq, V=2 is true/gt]
+#defined goal/1.         % goal(Y).          [Y is goal yield]
 
+#defined soft_constraints/0.
+#defined hard_constraints/0.
+
+% INFO: number of yields is 2**n where n is number of features
 % TODO: yield/2 currently unused. It could be used to reduce grounding by removing yields that are provably impossible.
-% INFO: #yields is 2**n where n is number of features
 
 
 % ==== Transitions
@@ -38,12 +41,12 @@ effect(G, F, 1)               :- fixed(G, F).
 
 eq(G, G)  :- good(G).
 eq(G, G2) :- good(G), good(G2), G < G2,
-             condition(G2, F, D) : condition(G, F, D);
-             condition(G, F, D) : condition(G2, F, D);
-             effect(G2, F, D) : effect(G, F, D);
-             effect(G, F, D) : effect(G2, F, D);
+             condition(G2, F, D) : condition(G,  F, D);
+             condition(G,  F, D) : condition(G2, F, D);
+             effect(G2, F, D) : effect(G,  F, D);
+             effect(G,  F, D) : effect(G2, F, D);
              source(G2, F, V) : condition(G, F, 1), source(G, F, V);
-             change(G2, F, C) : effect(G, F, 1), change(G, F, C).
+             change(G2, F, C) :    effect(G, F, 1), change(G, F, C).
 
 class(G)  :- good(G), not eq(G2, G) : good(G2), G2 < G.
 
@@ -73,7 +76,6 @@ compatible(G, S, F) :- good(G), sibling(S), boolean(F), effect(G, F, 1), change(
 % ==== Safeness ====
 
 % Good transition G is SAFE if for each bad transition B, G is either inconsistent or incompatible with B
-
 safe(G)    :- good(G), safe(G, B) : bad(B).
 safe(G, B) :- good(G), bad(B), not consistent(G, B).
 safe(G, B) :- good(G), bad(B), not compatible(G, B).
@@ -87,7 +89,7 @@ sound(G)                          :- good(G), there_is_compatible_sibling(T) : t
 there_is_compatible_sibling(T)    :- good(G), sibling(T, S), compatible(G, S).
 
 %*
-% Good transition G is SOUND if for each transition T that is CONSISTENT with G, there is a sibling S of T that is COMPATIBLE with G
+% Good transition G is (strongly) SOUND if for each transition T that is CONSISTENT with G, there is a sibling S of T that is COMPATIBLE with G
 sound(G)                          :- good(G), there_is_compatible_sibling(G, T) : transition(T), consistent(G, T), G != T.
 there_is_compatible_sibling(G, T) :- good(G), sibling(T, S), compatible(G, S), G != T.
 *%
@@ -121,25 +123,29 @@ triggers(G, Y)    :- good(G), yield(Y), value(Y, F, V) : feature(F), condition(G
 % Hard optimization (SAT)
 
 :- good(G), not safe(G).
+:- hard_constraints, class(G), not closed(G).
+:- hard_constraints, class(G), not sound(G).
 
 % Soft optimization
 
-#minimize { 1@50,     class, G     : class(G) }.
-#maximize { 1@40,   closure, G     : class(G), closed(G) }.
-#maximize { 1@30, soundness, G     : class(G), sound(G) }.
-#maximize { 1@20,   unknown, G, F  : class(G), effect(G, F, 0) }.
-#maximize { 1@10,  dontcare, G, F  : class(G), condition(G, F, 0) }.
+#minimize { 1@50,      class, G     : class(G) }.
+#maximize { 1@40,    closure, G     : class(G), closed(G) }.
+#maximize { 1@30,  soundness, G     : class(G), sound(G) }.
+#maximize { 1@10,    unknown, G, F  : class(G), effect(G, F, 0) }.
+#maximize { 1@10,   dontcare, G, F  : class(G), condition(G, F, 0) }.
 
 % ==== Show ====
 
 #show.
 #show eq/2.
 #show class/1.
-#show dont_care(G, F)    : class(G), condition(G, F, 0).
-#show unknown(G, F)      : class(G), effect(G, F, 0).
-#show nonsound(G)        : class(G), not sound(G).
-#show nonclosed(G)       : class(G), not closed(G).
-#show nonsafe(G)         : class(G), not safe(G).
-#show noncovered(Y)      : yield(Y), active(Y), not covered(Y).
-#show nonactive(Y)       : yield(Y), not active(Y).
+#show dont_care(G, F)     : class(G), condition(G, F, 0).
+#show unknown(G, F)       : class(G), effect(G, F, 0).
+#show non_safe(G)         : class(G), not safe(G).
+#show non_closed(G)       : class(G), not closed(G).
+#show non_sound(G)        : class(G), not sound(G).
+#show non_covered(Y)      : yield(Y), active(Y), not covered(Y).
+#show non_active(Y)       : yield(Y), not active(Y).
+#show soft_constraints/0.
+#show hard_constraints/0.
 
