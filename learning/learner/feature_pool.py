@@ -31,10 +31,12 @@ class FeaturePool:
             "distance_numerical_complexity_limit": kwargs.get("distance_numerical_complexity_limit"),
             "feature_limit": kwargs.get("feature_limit"),
             "strict_gc2_features": kwargs.get("strict_gc2_features"),
+            "extended_features": kwargs.get("extended_features"),
             "planner": benchmark._planner,
         }
 
         disable_feature_repositories: bool = kwargs.get("disable_feature_repositories", False)
+        force_features: bool = kwargs.get("force_features", False)
         all_repositories: bool = kwargs.get("all_repositories", False)
         flexible_repositories: bool = kwargs.get("flexible_repositories", False)
         store_features: bool = kwargs.get("store_features", False)
@@ -48,12 +50,16 @@ class FeaturePool:
         else:
             repositories: List[Path] = None
 
-        if repositories is not None and len(repositories) > 0:
+        if not force_features and repositories is not None and len(repositories) > 0:
             logging.info(colored(f"Found compatible feature repositories [{', '.join([repository.name for repository in repositories])}]", "blue"))
             pool, statistics = read_features_from_repositories(repositories,
                                                                self._benchmark._domain_data.syntactic_element_factory,
                                                                **kwargs)
         else:
+            if repositories is not None and len(repositories) > 0:
+                logging.info(colored(f"Found compatible feature repositories [{', '.join([repository.name for repository in repositories])}]", "blue"))
+                logging.info(colored(f"But option --force_features requested...", "blue"))
+
             logging.info(colored("Generating features...", "blue"))
             pool, _, statistics = generate_features(self._benchmark._domain_data.syntactic_element_factory,
                                                     self._benchmark._dlplan_states,

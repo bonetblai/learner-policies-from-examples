@@ -26,6 +26,7 @@ if __name__ == "__main__":
     # Arguments for feature generation
     feature_generation = parser.add_argument_group("Feature generation")
     feature_generation.add_argument("--disable_feature_generation", action=argparse.BooleanOptionalAction, default=False, help="Whether to enable feature generation")
+    feature_generation.add_argument("--force_features", action=argparse.BooleanOptionalAction, default=False, help="Force generation of features")
     feature_generation.add_argument("--generate_all_distance_features", action=argparse.BooleanOptionalAction, default=False, help="Whether to enable generation of all distance features")
     feature_generation.add_argument("--complexity_limit", type=int, default=None, help="Sets complexity limit for boolean, count, and distance features (default: None)")
     feature_generation.add_argument("--concept_complexity_limit", type=int, default=9, help="The complexity limit for concepts (default: 9)")
@@ -34,7 +35,8 @@ if __name__ == "__main__":
     feature_generation.add_argument("--count_numerical_complexity_limit", type=int, default=9, help="The complexity limit for count numerical features (default: 9)")
     feature_generation.add_argument("--distance_numerical_complexity_limit", type=int, default=9, help="The complexity limit for distance numerical features (default: 9)")
     feature_generation.add_argument("--feature_limit", type=int, default=1000000, help="The limit for the number of features (default: 1,000,000)")
-    feature_generation.add_argument("--strict-gc2-features", action=argparse.BooleanOptionalAction, default=False, help="Only generate GC2 (Guarded C2) features")
+    feature_generation.add_argument("--strict_gc2_features", action=argparse.BooleanOptionalAction, default=False, help="Only generate GC2 (Guarded C2) features")
+    feature_generation.add_argument("--extended_features", action=argparse.BooleanOptionalAction, default=False, help="Generate extended features (i.e., non-C2 features)")
 
     # Arguments for feature post-processing
     feature_post_processing = parser.add_argument_group("Feature post-processing")
@@ -135,6 +137,7 @@ if __name__ == "__main__":
         "benchmark_only": args.benchmark_only,
         # Feature generation
         "disable_feature_generation": args.disable_feature_generation,
+        "force_features": args.force_features,
         "generate_all_distance_features": args.generate_all_distance_features,
         "concept_complexity_limit": args.concept_complexity_limit,
         "role_complexity_limit": args.role_complexity_limit,
@@ -143,6 +146,7 @@ if __name__ == "__main__":
         "distance_numerical_complexity_limit": args.distance_numerical_complexity_limit,
         "feature_limit": args.feature_limit,
         "strict_gc2_features": args.strict_gc2_features,
+        "extended_features": args.extended_features,
         # Feature post processing
         "max_feature_depth": args.max_feature_depth,
         "analyze_features": args.analyze_features,

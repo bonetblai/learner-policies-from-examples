@@ -29,19 +29,26 @@ class FeatureChange(Enum):
     DOWN = 1
     BOT = 2
 
+def _get_parameters(raw_parameters: Dict[str, Any], flexible: bool) -> Dict[str, Any]:
+    parameters: Dict[str, Any] = dict(raw_parameters)
+    for parameter in ["max_feature_depth"]:
+        if parameter in parameters:
+            parameters.pop(parameter)
+    if flexible:
+        for parameter in ["planner", "extended_features"]:
+            if parameter in parameters:
+                parameters.pop(parameter)
+    return parameters
+
 def _is_matching_repository(feature_repository: Path, feature_parameters: Dict[str, Any], instance_names: List[str], flexible: bool = False) -> Optional[Dict[str, Any]]:
-    flexible_feature_parameters: Dict[str, Any] = dict(feature_parameters)
-    if flexible: flexible_feature_parameters.pop('planner')
     compressed: bool = feature_repository.name.endswith("gz") or feature_repository.name.endswith("gzip")
     with (feature_repository.open("r") if not compressed else gzip.open(feature_repository, "rt")) as fd:
         header: List[str] = [fd.readline().strip("\n"), fd.readline().strip("\n"), fd.readline().strip("\n")]
         read_parameters: Dict[str, Any] = eval(header[0])
-        if "max_feature_depth" in read_parameters:
-            read_parameters.pop("max_feature_depth")
-        if flexible: read_parameters.pop('planner')
+        read_parameters: Dict[str, Any] = _get_parameters(read_parameters, flexible)
         read_names: List[str] = eval(header[1])
         read_statistics: Dict[str, Any] = eval(header[2])
-        if read_parameters == flexible_feature_parameters and (flexible or read_names == instance_names):
+        if read_parameters == feature_parameters and (flexible or read_names == instance_names):
             return read_statistics
         else:
             return None
@@ -54,13 +61,17 @@ def find_feature_repositories(folder: Path, feature_parameters: Dict[str, Any], 
         return repositories
     else:
         for feature_repository in repositories:
-            statistics: Dict[str, Any] = _is_matching_repository(feature_repository, feature_parameters, instance_names, flexible)
+            print(feature_repository.name)
+            statistics: Dict[str, Any] = _is_matching_repository(feature_repository, _get_parameters(feature_parameters, flexible), instance_names, flexible)
             if statistics is not None:
                 compatible_repositories.append((feature_repository, statistics))
+            else:
+                logging.info(f"Feature repository {feature_repository.name} isn't compatible")
 
         # Find best compatible repository as the one with more features
         best_index = -1
         for index, (feature_repository, statistics) in enumerate(compatible_repositories):
+            print(feature_repository.name,  statistics.get("features", 0))
             if best_index == -1 or (compatible_repositories[best_index][1].get("features", -1) < statistics.get("features", 0)):
                 best_index = index
         return None if best_index == -1 else [compatible_repositories[best_index][0]]
@@ -190,12 +201,12 @@ def post_process_features(features: List[Feature], **kwargs) -> List[Feature]:
             "numerical": {
                 "pruned": len(numerical_features) - len(numerical_features_new),
                 "remain": len(numerical_features_new),
-                "reduction": 100 * (1.0 - float(len(numerical_features_new)) / float(len(numerical_features)))
+                "reduction": 0 if len(numerical_features) == 0 else 100 * (1.0 - float(len(numerical_features_new)) / float(len(numerical_features)))
             },
             "boolean": {
                 "pruned": len(boolean_features) - len(boolean_features_new),
                 "remain": len(boolean_features_new),
-                "reduction": 100 * (1.0 - float(len(boolean_features_new)) / float(len(boolean_features)))
+                "reduction": 0 if len(boolean_features) == 0 else 100 * (1.0 - float(len(boolean_features_new)) / float(len(boolean_features)))
             }
         }
         for key, stats in pruning_stats.items():
@@ -231,6 +242,7 @@ def generate_features(syntactic_element_factory: Any,
                       distance_numerical_complexity_limit: int = 9,
                       feature_limit: int = 1000,
                       strict_gc2_features: bool = False,
+                      extended_features: bool = False,
                       additional_booleans: List[str] = [],
                       additional_numericals: List[str] = [],
                       max_feature_depth: Optional[int] = None,
@@ -268,6 +280,11 @@ def generate_features(syntactic_element_factory: Any,
             # Disable all non-GC2 concepts and roles
             feature_generator.set_generate_equal_concept(False)  # CHECK
             feature_generator.set_generate_and_role(False)       # CHECK
+
+        if extended_features:
+            feature_generator.set_generate_or_concept(True)
+            feature_generator.set_generate_subset_concept(True)
+            feature_generator.set_generate_compose_role(True)
 
         # Generate features
         generation_timer.resume()
