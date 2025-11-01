@@ -6,7 +6,7 @@ from typing import Set, List, Tuple, MutableSet, Dict, Optional, Any
 
 from .benchmark import Benchmark
 from .feature_pool import FeaturePool
-from .wrapper import Wrapper, WrapperEnumeration
+from .wrapper import Wrapper, WrapperEnumeration, WrapperEnumerationV2
 
 from .src.util import Timer
 from .src.iteration import Statistics
@@ -36,6 +36,7 @@ def sketch_learner(
     distance_numerical_complexity_limit: int = 9,
     feature_limit: int = 1000000,
     strict_gc2_features: bool = False,
+    extended_features: bool = False,
     # Feature postprocessing
     max_feature_depth: int = None,
     analyze_features: bool = False,
@@ -147,6 +148,7 @@ def sketch_learner(
         "distance_numerical_complexity_limit": distance_numerical_complexity_limit,
         "feature_limit": feature_limit,
         "strict_gc2_features": strict_gc2_features,
+        "extended_features": extended_features,
         # Post processing
         "max_feature_depth": max_feature_depth,
         "analyze_features": analyze_features,
@@ -200,10 +202,12 @@ def sketch_learner(
         "randomized_sketch_test": randomized_sketch_test,
         "test_goal_separating_features": False,
         "solve_pending_requirements": True,
-        "max_num_solutions": 500,
+        "max_num_solutions": 1000,
         "max_cost_bound": 100,
+        "max_f_idxs": 5,
+        "uniform_costs": uniform_costs,
     }
-    WrapperClass = WrapperEnumeration if enumerate_solutions else Wrapper
+    WrapperClass = WrapperEnumerationV2 if enumerate_solutions else Wrapper
     wrapper: WrapperBase = WrapperClass(benchmark, feature_pool, learner, timers, **wrapper_options)
     wrapper.learn()
 
