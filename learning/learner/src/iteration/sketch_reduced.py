@@ -15,17 +15,25 @@ from dlplan.policy import PolicyMinimizer
 
 from .feature_pool import Feature
 from .iteration_data import IterationData
+from .feature_decoder import FeatureDecoder
 from ..preprocessing import PreprocessingData, InstanceData
 from ..state_space import StateFactory
 from ..util import Timer
 
 
 class SketchReduced:
-    def __init__(self, state_factory: StateFactory, feature_pool: List[Feature], dlplan_policy: dlplan_policy.Policy, width: int):
+    def __init__(self, state_factory: StateFactory, feature_pool: List[Feature], f_idxs: List[int], dlplan_policy: dlplan_policy.Policy, width: int):
         self._state_factory: StateFactory = state_factory
         self._feature_pool: List[Feature] = feature_pool
-        self._dlplan_policy = dlplan_policy
-        self._width = width
+        self._f_idxs: List[int] = f_idxs
+        self._dlplan_policy: dlplan_policy.Policy = dlplan_policy
+        self._width: int = width
+
+    def _get_state_values(self, instance_data: InstanceData, state_idx: int) -> Dict[int, int]:
+        state: Any = instance_data.get_state(state_idx)[1]
+        dlplan_state: dlplan_core.State = instance_data.get_dlplan_state(state_idx, state)
+        state_values: Dict[int, int] = {f_idx: self._feature_pool[f_idx]._dlplan_feature.evaluate(dlplan_state) for f_idx in self._f_idxs}
+        return state_values
 
     def _values_satisfy_condition(self, values: Dict[int, int], condition: Dict[int, int]) -> bool:
         for f_idx, bvalue in condition.items():
@@ -41,17 +49,23 @@ class SketchReduced:
         return False
 
     def _state_satisfies_conditions(self, instance_data: InstanceData, state_idx: int, conditions: List[Dict[int, int]]) -> bool:
-        state: Any = instance_data.get_state(state_idx)[1]
-        dlplan_state: dlplan_core.State = instance_data.get_dlplan_state(state_idx, state)
-        f_idxs: Set[int] = set.union(*[set(condition.keys()) for condition in conditions])
-        values: Dict[int, int] = {f_idx: self._feature_pool[f_idx]._dlplan_feature.evaluate(dlplan_state) for f_idx in f_idxs}
-        return self._values_satisfy_conditions(values, conditions)
+        return self._values_satisfy_conditions(self._get_state_values(instance_data, state_idx), conditions)
+
+    def _values_get_satisfied_conditions(self, values: Dict[int, int], conditions: List[Dict[int, int]]) -> List[Dict[int, int]]:
+        satisfied_conditions: List[Dict[int, int]] = []
+        for condition in conditions:
+            if self._values_satisfy_condition(values, condition):
+                satisfied_conditions.append(condition)
+        return satisfied_conditions
+
+    def _state_get_satisfied_conditions(self, instance_data: InstanceData, state_idx: int, conditions: List[Dict[int, int]]) -> List[Dict[int, int]]:
+        return self._values_get_satisfied_conditions(self._get_state_values(instance_data, state_idx), conditions)
 
     def _get_width_successors(self, instance_data: InstanceData, state_idx: int) -> List[Tuple[Tuple[int, Any], str]]:
         if self._width == 0:
             successors: List[Tuple[Tuple[int, Any], str]] = [((succ_state_idx, succ_state), action) for (succ_state_idx, succ_state), action in instance_data.get_successors(state_idx) if succ_state_idx != state_idx]
         else:
-            successors: List[int] = list(instance_data.explore(state_idx, self._width, caching=True) - intbitset([state_idx]))
+            successors: List[int] = list(instance_data.exploration(state_idx, self._width, caching=True) - intbitset([state_idx]))
             successors: List[Tuple[Tuple[int, Any], str]] = [(instance_data.get_state(succ_state_idx), "<not-avail>") for succ_state_idx in successors]
         logging.debug(f"[_get_width_successors] ext_state={(instance_data.idx, state_idx)}, width={self._width}, #successors={len(successors)}")
         return successors
@@ -66,7 +80,7 @@ class SketchReduced:
         logging.debug(f"[VERIFY] INSTANCE_INDEX: {instance_data.idx}")
 
         # Get valuations for goals (if any)
-        valuations_for_goals: List[Dict[int, int]] = kwargs.get("valuations_for_goals")
+        conditions_for_goal: List[Dict[int, int]] = kwargs.get("conditions_for_goal")
 
         queue: Deque[int] = deque()
         visited: MutableSet[int] = set()
@@ -111,14 +125,16 @@ class SketchReduced:
 
             logging.debug(f"[VERIFY] DEQUED: {root_state_idx}.{root_dlplan_state}")
 
-            satisfies_valuations_for_goals: bool = None if valuations_for_goals is None else self._state_satisfies_conditions(instance_data, root_state_idx, valuations_for_goals)
+            satisfies_conditions_for_goal: bool = None if conditions_for_goal is None else self._state_satisfies_conditions(instance_data, root_state_idx, conditions_for_goal)
             if instance_data.is_goal_state(root_state_idx):
                 logging.debug(colored(f"[VERIFY] GOAL state: instance_idx={instance_data.idx}, {root_state_idx}.{root_dlplan_state}", "red"))
-                if satisfies_valuations_for_goals is not None and not satisfies_valuations_for_goals:
-                    logging.warning(colored(f"[VERIFY] GOAL ext_state={(instance_data.idx, root_state_idx)} doesn't satisfy valuations for goals {valuations_for_goals}", "magenta"))
+                if satisfies_conditions_for_goal is not None and not satisfies_conditions_for_goal:
+                    logging.warning(colored(f"[VERIFY] GOAL ext_state={(instance_data.idx, root_state_idx)} doesn't satisfy goal conditions {conditions_for_goal}", "magenta"))
                 continue
-            elif satisfies_valuations_for_goals is not None and satisfies_valuations_for_goals:
-                logging.warning(colored(f"[VERIFY] NON-GOAL ext_state={(instance_idx, root_state_idx)} satisfies valuations for goals {valuations_for_goals}", "magenta"))
+            elif satisfies_conditions_for_goal is not None and satisfies_conditions_for_goal:
+                logging.info(colored(f"NON-GOAL ext_state={(instance_data.idx, root_state_idx)} satisfies goal conditions {conditions_for_goal}", "magenta"))
+                reason: Dict[str, Any] = {"non-goal": ((instance_data.idx, root_state_idx), self._state_get_satisfied_conditions(instance_data, root_state_idx, conditions_for_goal))}
+                return False, None, reason
 
             is_deadend: bool = instance_data.is_deadend_state(root_state_idx)
 
@@ -143,13 +159,13 @@ class SketchReduced:
             expanded += 1
 
             timers["successors"].resume()
-            successors: List[Tuple[Tuple[int, Any], str]] = self._get_width_successors(instance_data, root_state_idx)
-            generated += len(successors)
-            random.shuffle(successors)
+            width_successors: List[Tuple[Tuple[int, Any], str]] = self._get_width_successors(instance_data, root_state_idx)
+            generated += len(width_successors)
+            random.shuffle(width_successors)
             timers["successors"].stop()
 
-            num_alive_successors = 0
-            for i, ((succ_state_idx, succ_state), action) in enumerate(successors):
+            num_alive_width_successors = 0
+            for i, ((succ_state_idx, succ_state), action) in enumerate(width_successors):
                 succ_dlplan_state = instance_data.get_dlplan_state(succ_state_idx, succ_state)
                 logging.debug(f"[VERIFY]   SUCCESSOR: {succ_state_idx}.{succ_dlplan_state} [action={action}]")
 
@@ -163,15 +179,15 @@ class SketchReduced:
                         visited.add(succ_state_idx)
                         queue.append(succ_state_idx)
                         parent[succ_state_idx] = root_state_idx
-                    num_alive_successors += 1
+                    num_alive_width_successors += 1
 
                     # If randomized test, do limited exploration
-                    if randomized_sketch_test is not None and num_alive_successors >= randomized_sketch_test:
+                    if randomized_sketch_test is not None and num_alive_width_successors >= randomized_sketch_test:
                         break
             timers["expansion"].stop()
 
             # If no successors, this is a deadend state. It may fail above check as deadend check may be incomplete
-            if len(successors) == 0:
+            if len(width_successors) == 0:
                 logging.debug(colored(f"[VERIFY] DEADEND state is r_reachable (no successors): instance_idx={instance_data.idx}, {root_state_idx}.{root_dlplan_state}", "red"))
                 state_idx_path: List[int] = []
                 state_idx = root_state_idx
@@ -184,13 +200,13 @@ class SketchReduced:
                 reason: Dict[str, Any] = {"deadend": tuple([(instance_data.idx, state_idx) for state_idx in state_idx_path])}
                 return False, None, reason
 
-            if num_alive_successors == 0:
+            if num_alive_width_successors == 0:
                 if num_consistent_conditions == 0:
                     non_closed_ext_states.add((instance_data.idx, root_state_idx))
-                    logging.info(colored(f"Sketch isn't CLOSED for {instance_data.instance_filepath()}/{instance_data.idx}, {root_state_idx}.{root_dlplan_state}", "red"))
+                    logging.info(colored(f"Sketch isn't CLOSED for {instance_data.instance_filepath()}/{instance_data.idx}, {root_state_idx}.{root_dlplan_state} [values={self._get_state_values(instance_data, root_state_idx)}]", "red"))
                 else:
                     non_sound_ext_states.add((instance_data.idx, root_state_idx))
-                    logging.info(colored(f"Sketch isn't SOUND for {instance_data.instance_filepath()}/{instance_data.idx}, {root_state_idx}.{root_dlplan_state}", "red"))
+                    logging.info(colored(f"Sketch isn't SOUND for {instance_data.instance_filepath()}/{instance_data.idx}, {root_state_idx}.{root_dlplan_state} [values={self._get_state_values(instance_data, root_state_idx)}]", "red"))
                 if len(non_closed_ext_states) + len(non_sound_ext_states) >= max_non_covered_ext_states:
                     break
 
@@ -349,7 +365,7 @@ class SketchReduced:
 
         num_tests: int = 1 if randomized_sketch_test is None else 10
         subgoal_states_per_r_reachable_state: Dict[int, Set[int]] = defaultdict(set)
-        logging.info(colored(f"Verifying sketch solvability on {instance_data.instance_filepath()}/{instance_data.idx}{'' if num_tests == 1 else ' (' + str(num_tests) + ' times)'}", "blue"))
+        logging.debug(colored(f"Verifying sketch solvability on {instance_data.instance_filepath()}/{instance_data.idx}{'' if num_tests == 1 else ' (' + str(num_tests) + ' times)'}", "blue"))
         for _ in range(num_tests):
             status, sample_subgoal_states_per_r_reachable_state, reason = self._verify_policy_for_bounded_width(preprocessing_data, iteration_data, instance_data, **kwargs)
             assert not status or reason is None
@@ -377,268 +393,6 @@ class SketchReduced:
         #return SketchReduced(PolicyMinimizer().minimize(self._dlplan_policy, policy_builder), self._width)
         raise RuntimeError("Policy minimization must be fixed; not yet done!")
 
-    def parse_feature(self, feature: str) -> List:
-        # Split feature by top-level commas
-        def split(f: str) -> List:
-            i, level = 0, 0
-            token, tokens = "", []
-            while i < len(f):
-                #print(f"DEBUG: f=|{f}|, i={i}, level={level}, char=|{f[i]}|, token=|{token}|, tokens={tokens}")
-                char = f[i]
-                if char == "(":
-                    token += char
-                    level += 1
-                elif char == ")":
-                    token += char
-                    level -= 1
-                elif char == "," and level == 0:
-                    tokens.append(token)
-                    token = ""
-                else:
-                    token += char
-                i += 1
-            if token != "":
-                tokens.append(token)
-                token = ""
-            #print(f"DEBUG: f=|{f}|, i={i}, level={level}, char=END, token=|{token}|, tokens={tokens}")
-            return tokens
-
-        # Parse
-        def parse(f: str, vars: List[int] = None, indent: int = 0) -> List[Any]:
-            #print(f"parse:{'  ' * indent}f=|{f}|, vars={vars}")
-            # Parse Boolean features
-            if f.startswith("b_empty"):
-                assert f.endswith(")")
-                tokens = split(f[8:-1])
-                assert len(tokens) == 1
-                vars = [0, 1] if tokens[0].startswith("r_") else [0]
-                return ["b_empty", vars, parse(tokens[0], vars, 1 + indent)]
-            elif f.startswith("b_nullary"):
-                assert f.endswith(")")
-                tokens = split(f[10:-1])
-                assert len(tokens) == 1
-                return ["b_nullary", [], tokens[0]]
-            elif f.startswith("b_"):
-                raise RuntimeError(f"Unexpected Boolean |{f}|")
-
-            # Parse numerical features
-            elif f.startswith("n_count"):
-                assert f.endswith(")")
-                tokens = split(f[8:-1])
-                assert len(tokens) == 1
-                vars = [0, 1] if tokens[0].startswith("r_") else [0]
-                return ["n_count", vars, parse(tokens[0], vars, 1 + indent)]
-            elif f.startswith("n_concept_distance"):
-                assert f.endswith(")")
-                tokens = split(f[19:-1])
-                assert len(tokens) == 3
-                vars = [0, 1]
-                return ["n_concept_distance", vars] + [parse(tokens[0], vars[:1], 1 + indent), parse(tokens[1], vars, 1 + indent), parse(tokens[2], vars[1:], 1 + indent)]
-            elif f.startswith("n_"):
-                raise RuntimeError(f"Unexpected numerical |{f}|")
-
-            # Parse roles
-            elif f.startswith("r_primitive"):
-                assert f.endswith(")")
-                tokens = split(f[12:-1])
-                assert len(tokens) == 3
-                return ["r_primitive", vars[-2:], tokens[0]]
-            elif f.startswith("r_inverse"):
-                assert f.endswith(")")
-                tokens = split(f[10:-1])
-                assert len(tokens) == 1
-                return parse(tokens[0], [vars[-1], vars[-2]], 1 + indent)
-            elif f.startswith("r_and"):
-                assert f.endswith(")")
-                tokens = split(f[6:-1])
-                assert len(tokens) == 2
-                return ["r_and", vars] + [parse(token, vars, 1 + indent) for token in tokens]
-            elif f.startswith("r_transitive_closure"):
-                assert f.endswith(")")
-                tokens = split(f[21:-1])
-                assert len(tokens) == 1
-                return ["r_transitive_closure", vars, parse(tokens[0], vars, 1 + indent)]
-            elif f.startswith("r_restrict"):
-                assert f.endswith(")")
-                tokens = split(f[11:-1])
-                assert len(tokens) == 2
-                return ["r_restrict", vars, parse(tokens[0], vars[-2:], 1 + indent), parse(tokens[1], vars[-1:], 1 + indent)]
-            elif f.startswith("r_"):
-                raise RuntimeError(f"Unexpected role |{f}|")
-
-            # Parse concepts
-            elif f.startswith("c_bot"):
-                return ["c_bot", []]
-            elif f.startswith("c_top"):
-                return ["c_top", []]
-            elif f.startswith("c_one_of"):
-                assert f.endswith(")")
-                tokens = split(f[9:-1])
-                assert len(tokens) == 1
-                return ["c_one_of", vars[-1:], tokens[0]]
-            elif f.startswith("c_primitive"):
-                assert f.endswith(")")
-                tokens = split(f[12:-1])
-                assert len(tokens) == 2
-                return ["c_primitive", vars[-1:], tokens[0]]
-            elif f.startswith("c_not"):
-                assert f.endswith(")")
-                tokens = split(f[6:-1])
-                assert len(tokens) == 1
-                return ["c_not", vars, parse(tokens[0], vars, 1 + indent)]
-            elif f.startswith("c_and"):
-                assert f.endswith(")")
-                tokens = split(f[6:-1])
-                assert len(tokens) == 2, tokens
-                return ["c_and", vars] + [parse(token, vars, 1 + indent) for token in tokens]
-            elif f.startswith("c_equal"):
-                assert f.endswith(")")
-                tokens = split(f[8:-1])
-                assert len(tokens) == 2
-                vars = vars + [1 + max(vars)]
-                return ["c_equal", vars] + [parse(token, vars, 1 + indent) for token in tokens]
-            elif f.startswith("c_some"):
-                assert f.endswith(")")
-                tokens = split(f[7:-1])
-                assert len(tokens) == 2
-                var = 1 + max(vars)
-                return ["c_some", [vars[-1], var]] + [parse(token, vars + [var], 1 + indent) for token in tokens]
-            elif f.startswith("c_all"):
-                assert f.endswith(")")
-                tokens = split(f[6:-1])
-                assert len(tokens) == 2
-                var = 1 + max(vars)
-                return ["c_all", [vars[-1], var]] + [parse(token, vars + [var], 1 + indent) for token in tokens]
-            elif f.startswith("c_"):
-                raise RuntimeError(f"Unexpected concept |{f}|")
-
-            # Unexpected
-            else:
-                raise RuntimeError(f"Unexpected |{f}|")
-
-        return parse(feature)
-
-    def decode_feature(self, feature: str) -> str:
-        parsed: List = self.parse_feature(feature)
-        #print(f"feature: {feature}")
-        #print(f" parsed: {parsed}")
-        def decode(f: List, formula: bool, indent: int = 0) -> str:
-            #print(f"decode: {'  ' * indent}{f}")
-            assert type(f) == list and len(f) > 0
-
-            # Boolean features
-            if f[0] == "b_empty":
-                role_or_concept: str = decode(f[2], formula=False, indent=1 + indent)
-                return f"Empty({role_or_concept})"
-            elif f[0] == "b_nullary":
-                return f"{f[2]()}" if formula else f"<nullary({f[2]})>"
-            elif f[0].startswith("b_"):
-                logging.warning(f"Unexpected Boolean {f}")
-                return f"<unexpected-boolean({f})>"
-
-            # Numerical features
-            elif f[0] == "n_count":
-                role_or_concept: str = decode(f[2], formula=False, indent=1 + indent)
-                return f"Cardinality({role_or_concept})"
-            elif f[0] == "n_concept_distance":
-                concept1: str = decode(f[2], formula=False, indent=1 + indent)
-                role: str = decode(f[3], formula=True, indent=1 + indent)
-                concept2: str = decode(f[4], formula=False, indent=1 + indent)
-                return f"Distance({concept1}, {role}, {concept2}))"
-            elif f[0].startswith("n_"):
-                logging.warning(f"Unexpected numerical {f}")
-                return f"<unexpected-numerical({f})>"
-
-            # Roles
-            elif f[0] == "r_primitive":
-                vars: List[str] = [f"x{i}" for i in f[1]]
-                role: str = f[2]
-                vpair: str = "(" + ",".join(vars[-2:]) + ")"
-                return f"{role}{vpair}" if formula else f"{{{vpair} : {role}{vpair}}}"
-            elif f[0] == "r_and":
-                vars: List[str] = [f"x{i}" for i in f[1]]
-                role1: str = decode(f[2], formula=True, indent=1 + indent)
-                role2: str = decode(f[3], formula=True, indent=1 + indent)
-                vpair: str = "(" + ",".join(vars[-2:]) + ")"
-                return f"[{role1} & {role2}]" if formula else f"{{{vpair} : {role1} & {role2}}}"
-            elif f[0].startswith("r_transitive_closure"):
-                vars: List[str] = [f"x{i}" for i in f[1]]
-                role: str = decode(f[2], formula=True, indent=1 + indent)
-                vpair: str = "(" + ",".join(vars[-2:]) + ")"
-                i = role.rfind(vpair)
-                assert i != -1, f"role=|{role}|, vpair=|{vpair}|"
-                naked_role: str = role[:i]
-                tc_formula: str = f"TC[{naked_role}]{vpair}"
-                return tc_formula if formula else f"{{{vpair} : {tc_formula}}}"
-            elif f[0].startswith("r_restrict"):
-                vars: List[str] = [f"x{i}" for i in f[1]]
-                role: str = decode(f[2], formula=True, indent=1 + indent)
-                concept: str = decode(f[3], formula=True, indent=1 + indent)
-                vpair: str = "(" + ",".join(vars[-2:]) + ")"
-                return f"[{role} & {concept}]" if formula else f"{{{vpair} : {role} & {concept}}}"
-            elif f[0].startswith("r_"):
-                logging.warning(f"Unexpected role {f}")
-                return f"<unexpected-role({f})>"
-
-            # Concepts
-            elif f[0] == "c_bot":
-                return "False" if formula else "None"
-            elif f[0] == "c_top":
-                return "True" if formula else "All"
-            elif f[0] == "c_one_of":
-                var : str = f"x{f[1][-1]}"
-                return f"[{var} = {f[2]}]" if formula else f"{{{f[2]}}}"
-            elif f[0] == "c_primitive":
-                vars: List[str] = [f"x{i}" for i in f[1]]
-                concept: str = f[2]
-                vpair: str = "(" + ",".join(vars) + ")"
-                return f"{concept}{vpair}" if formula else f"{{{vars[0]} : {concept}{vpair}}}"
-            elif f[0] == "c_not":
-                vars: List[str] = [f"x{i}" for i in f[1]]
-                concept: str = decode(f[2], formula, indent=1 + indent)
-                vpair: str = "(" + ",".join(vars) + ")"
-                return f"-{concept}" if formula else f"\compl({concept})"
-            elif f[0] == "c_and":
-                concept1: str = decode(f[2], formula, 1 + indent)
-                concept2: str = decode(f[3], formula, 1 + indent)
-                return f"[{concept1} & {concept2}]" if formula else f"[{concept1} \cap {concept2}]"
-            elif f[0] == "c_equal":
-                vars: List[str] = [f"x{i}" for i in f[1]]
-                var, qvar = vars[0], vars[1]
-                role1: str = decode(f[2], formula=True, indent=1 + indent)
-                role2: str = decode(f[3], formula=True, indent=1 + indent)
-                if formula:
-                    return f"[Forall {qvar}.[{role1} <=> {role2}]]({var})"
-                else:
-                    return f"{{{var} : {{{qvar} : {role1}}} = {{{qvar} : {role2}}}}}"
-            elif f[0] == "c_some":
-                vars: List[str] = [f"x{i}" for i in f[1]]
-                var, qvar = vars[0], vars[1]
-                role: str = decode(f[2], formula=True, indent=1 + indent)
-                concept: str = decode(f[3], formula=True, indent=1 + indent)
-                if formula:
-                    return f"[Exist {qvar}.[{role} & {concept}]]({var})"
-                else:
-                    return f"{{{var} : Exists {qvar}.[{role} & {concept}]}}"
-            elif f[0] == "c_all":
-                vars: List[str] = [f"x{i}" for i in f[1]]
-                var, qvar = vars[0], vars[1]
-                role: str = decode(f[2], formula=True, indent=1 + indent)
-                concept: str = decode(f[3], formula=True, indent=1 + indent)
-                if formula:
-                    return f"[Forall {qvar}.[{role} => {concept}]]({var})"
-                else:
-                    return f"{{{var} : Forall {qvar}.[{role} => {concept}]}}"
-            elif f[0].startswith("c_"):
-                logging.warning(f"Unexpected concept {f}")
-                return f"<unexpected-concept({f})>"
-
-            # Unexpected
-            else:
-                raise RuntimeError(f"Unexpected '{f}'")
-
-        return decode(parsed, formula=False)
-
     def print(self, logger: bool = False):
         sketch_lines: List[str] = str(self._dlplan_policy).splitlines()
 
@@ -655,13 +409,14 @@ class SketchReduced:
                 features[feature_type[2:]] = list(zip(fids, names))
         """
 
+        decoder: FeatureDecoder = FeatureDecoder()
         features: List[Tuple[int, int, str]] = []
         max_complexity: int = 0
         sum_complexity: int = 0
         for feature in list(self._dlplan_policy.get_booleans()) + list(self._dlplan_policy.get_numericals()):
             fid: int = int(feature.get_key()[1:])
             complexity: int = feature.get_element().compute_complexity()
-            decoded: str = self.decode_feature(str(feature.get_element()))
+            decoded: str = decoder(str(feature.get_element()))
             features.append((fid, complexity, decoded))
             max_complexity = max(max_complexity, complexity)
             sum_complexity += complexity
