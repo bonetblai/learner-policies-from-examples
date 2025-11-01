@@ -35,6 +35,8 @@ class Node:
     _inits: FrozenSet[Tuple[int, int]] = None
     _goals: FrozenSet[Tuple[int, int]] = None
     _k_reachable: Dict[Tuple[int, int], intbitset] = None
+    _max_f_idxs: int = None
+    _uniform_costs: bool = None
 
     def __init__(self):
         self._branch_to_f_idx: Dict[str, int] = {"": -1}
@@ -84,7 +86,7 @@ class Node:
         successor._num_tips -= 1
         if g_idx not in successor._f_idxs:
             successor._f_idxs.add(g_idx)
-            successor._cost += viewer.f_idx_to_feature(g_idx).complexity - 1
+            successor._cost += viewer.f_idx_to_feature(g_idx).complexity - 1 if not self._uniform_costs else 1
 
         # Remove rules that change g_idx
         rules_that_change_g_idx: intbitset = viewer.r_idxs_that_change(g_idx)
@@ -136,8 +138,9 @@ class Node:
             # Calculate termini = { s : (s0,s) \in T* such that s \notin \pre(T) }
             successor._termini: Set[Tuple[int, int]] = set()
             for instance_idx, s0_idx in Node._inits:
-                assert instance_idx in successor._TC
-                successor._termini.update([(instance_idx, state_idx) for state_idx in successor._TC.get(instance_idx).start_at(s0_idx) if (instance_idx, state_idx) not in successor._preset])
+                if instance_idx in successor._TC:
+                    assert instance_idx in successor._TC, f"instance_idx={instance_idx}, s0_idx={s0_idx}, TC.keys={successor._TC.keys()}"
+                    successor._termini.update([(instance_idx, state_idx) for state_idx in successor._TC.get(instance_idx).start_at(s0_idx) if (instance_idx, state_idx) not in successor._preset])
             #logging.info(f"Termini: {successor._termini}")
 
         logging.debug(f"Successor: {successor}, termini={successor._termini}, terminal={successor.is_terminal()}")
@@ -222,7 +225,9 @@ class Node:
                    width: int,
                    ext_state_to_ext_edge: Dict[Tuple[int, int], Tuple[int, Tuple[int, int]]],
                    ext_state_to_feature_valuations: Dict[Tuple[int, int], np.ndarray],
-                   k_reachable: Dict[Tuple[int, int], intbitset]):
+                   k_reachable: Dict[Tuple[int, int], intbitset],
+                   max_f_idxs: int,
+                   uniform_costs: bool):
         cls._width: int = width
         if cls._width > 0:
             ext_edges_preset: FrozenSet[Tuple[int, int]] = frozenset([(instance_idx, src_state_idx) for instance_idx, (src_state_idx, _) in ext_state_to_ext_edge.values()])
@@ -232,6 +237,8 @@ class Node:
             cls._inits: FrozenSet[Tuple[int, int]] = ext_edges_preset - ext_edges_poset
             cls._goals: FrozenSet[Tuple[int, int]] = ext_edges_poset - ext_edges_preset
             cls._k_reachable: Dict[Tuple[int, int], intbitset] = k_reachable
+        cls._max_f_idxs: int = max_f_idxs
+        cls._uniform_costs: bool = uniform_costs
 
     @classmethod
     def get_root_node(cls) -> "Node":
@@ -278,7 +285,8 @@ class Node:
         next_cost_bound: int = int(1e6)
         lower_bound = self._cost #+ (self._num_tips - 1) * viewer._min_complexity # Cannot add this term as tips can be resolved with features already included in node at no further cost
         for cost, g_idx in sorted([(viewer.f_idx_to_feature(g_idx).complexity - 1, g_idx) for g_idx in monotone_g_idxs]):
-            if g_idx in self._f_idxs or cost_bound is None or lower_bound + cost <= cost_bound:
+            revised_cost: int = 1 if self._uniform_costs else cost
+            if g_idx in self._f_idxs or ((cost_bound is None or lower_bound + revised_cost <= cost_bound) and (self._max_f_idxs is None or len(self._f_idxs) < self._max_f_idxs)):
                 r_idxs_that_change_g_idx: intbitset = viewer.r_idxs_that_change(g_idx)
                 if len(r_idxs_that_change_g_idx) > 0:
                     partition: Dict[Tuple[Tuple[int, int]], intbitset] = _partition_r_idxs_with_f_idx(viewer.r_idxs() - r_idxs_that_change_g_idx, g_idx, viewer, boolean_projection=False)
@@ -286,8 +294,8 @@ class Node:
                     if split not in splits:
                         heapq.heappush(successors, self._create_successor(branch, g_idx, viewer))
                         splits.add(split)
-            else:
-                next_cost_bound = min(next_cost_bound, lower_bound + cost)
+            elif self._max_f_idxs is None or len(self._f_idxs) < self._max_f_idxs:
+                next_cost_bound = min(next_cost_bound, lower_bound + revised_cost)
 
         # Restore rules following bottom-up branch traversal
         for removed_rules in reversed(list_removed_rules):
@@ -364,6 +372,10 @@ class SolutionGenerator:
         local_timer.stop()
         logging.info(f"{sum([len(reachable) for reachable in self._k_reachable.values()]) if self._width > 0 else 0} reachability pair(s) calculated in {local_timer.get_elapsed_sec():0.2f} second(s)")
 
+        # Other options
+        self._max_f_idxs: int = kwargs.get("max_f_idxs", int(1e6))
+        self._uniform_costs: bool = kwargs.get("uniform_costs", False)
+
     def _calculate_reachable_pairs(self) -> Dict[Tuple[int, int], intbitset]:
         if self._width == 0:
             return None
@@ -381,7 +393,7 @@ class SolutionGenerator:
             k_reachable: Dict[Tuple[int, int], intbitset] = dict()
             for instance_idx, (src_idx, dst_idx) in ext_edges:
                 state_idxs: intbitset = instance_idx_to_state_idxs[instance_idx]
-                k_reachable[(instance_idx, src_idx)] = self._state_factory.explore(instance_idx, src_idx, self._width, caching=True) & state_idxs
+                k_reachable[(instance_idx, src_idx)] = self._state_factory.exploration(instance_idx, src_idx, self._width, caching=True) & state_idxs
             return k_reachable
 
     def _node_generator(self, branch_selection_heuristic: Callable[Node, str], **kwargs) -> Generator[Node, None, None]:
@@ -402,7 +414,7 @@ class SolutionGenerator:
                     next_cost_bound = min(next_cost_bound, ncb)
             return next_cost_bound
 
-        Node.initialize(self._width, self._ext_state_to_ext_edge, self._ext_state_to_feature_valuations, self._k_reachable)
+        Node.initialize(self._width, self._ext_state_to_ext_edge, self._ext_state_to_feature_valuations, self._k_reachable, self._max_f_idxs, self._uniform_costs)
         max_cost_bound: int = kwargs.get("max_cost_bound", 100)
 
         self._layers.append([])
@@ -447,7 +459,7 @@ class SolutionGenerator:
                     if cost > 0: return cost
             return -1
 
-        Node.initialize(self._width, self._ext_state_to_ext_edge, self._ext_state_to_feature_valuations, self._k_reachable)
+        Node.initialize(self._width, self._ext_state_to_ext_edge, self._ext_state_to_feature_valuations, self._k_reachable, self._max_f_idxs, self._uniform_costs)
         max_cost_bound: int = kwargs.get("max_cost_bound", 100)
 
         self._num_generated.append(0)
@@ -476,12 +488,12 @@ class SolutionGenerator:
         self._viewer.reset()
 
         # Generate solutions in increasing order of cost
-        max_num_solutions: int = kwargs.get("max_num_solutions", 100)
+        max_num_solutions: int = kwargs.get("max_num_solutions")
         for i, node in enumerate(self._node_generator(_branch_selection_heuristic_1, **kwargs)):
-            logging.info(f"Got node {node}")
+            logging.info(f"Got node {1 + i} {node}")
             yield node._f_idxs, node.get_r_idx_to_info(self._viewer)
-            if i + 1 == max_num_solutions: break
-        logging.debug(f"Nodes: #expanded={self._num_expanded}, #generated={self._num_generated}")
+            if max_num_solutions is not None and max_num_solutions <= 1 + i: break
+        logging.info(f"Nodes: #expanded={self._num_expanded}, #generated={self._num_generated}")
 
     def __call__(self, **kwargs) -> Generator[Any, None, None]:
         yield from self._solutions(**kwargs)
