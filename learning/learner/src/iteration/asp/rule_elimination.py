@@ -33,9 +33,9 @@ def _partition_r_idxs_with_f_idx(r_idxs: intbitset, f_idx: int, viewer: RuleView
 
 
 class RuleElimination:
-    def __init__(self, preprocessing_data: Dict[str, Any], state_factory: StateFactory, **kwargs):
+    def __init__(self, benchmark: Any, preprocessing_data: Dict[str, Any], **kwargs):
+        self._benchmark: Any = benchmark
         self._preprocessing_data: Dict[str, Any] = preprocessing_data
-        self._state_factory: StateFactory = state_factory
         self._simplify_policy: bool = kwargs.get("simplify_policy", False)
         self._simplify_only_conditions: bool = kwargs.get("simplify_only_conditions", False)
         self._uniform_costs: bool = kwargs.get("uniform_costs", False)
@@ -77,7 +77,7 @@ class RuleElimination:
             "threshold_for_asp_based_simplification": kwargs.get("threshold_for_asp_based_simplification", 12),
             "solve_pending_requirements": kwargs.get("solve_pending_requirements", False),
         }
-        self._finalizer: PolicyFinalizer = PolicyFinalizer(self._preprocessing_data, self._viewer._r_idx_to_ext_state, self._viewer._ext_state_to_r_idx, self._annotated_requirements)
+        self._finalizer: PolicyFinalizer = PolicyFinalizer(self._benchmark, self._preprocessing_data, self._viewer._r_idx_to_ext_state, self._viewer._ext_state_to_r_idx, self._annotated_requirements)
 
     def _score_fn(self, f_idx: int, chosen: intbitset) -> Tuple[Union[int, float]]:
         feature_index: int = self._f_idx_to_feature_index[f_idx]
@@ -115,8 +115,8 @@ class RuleElimination:
             for r_idx in r_idxs:
                 ext_state: Tuple[int, int] = self._viewer.get_ext_state(r_idx)
                 ext_edge: Tuple[int, Tuple[int, int]] = self._ext_state_to_ext_edge.get(ext_state)
-                src_dlplan_state: dlplan_core.State = self._state_factory.get_dlplan_state(ext_edge[0], ext_edge[1][0])
-                dst_dlplan_state: dlplan_core.State = self._state_factory.get_dlplan_state(ext_edge[0], ext_edge[1][1])
+                src_dlplan_state: dlplan_core.State = self._benchmark.get_dlplan_state(ext_edge[0], ext_edge[1][0])
+                dst_dlplan_state: dlplan_core.State = self._benchmark.get_dlplan_state(ext_edge[0], ext_edge[1][1])
                 logging.warning(f"  r_idx={r_idx}, ext_edge={ext_edge}")
                 logging.warning(f"    src_state: {ext_edge[1][0]}.{src_dlplan_state}")
                 logging.warning(f"    dst_state: {ext_edge[1][1]}.{dst_dlplan_state}")
@@ -248,17 +248,6 @@ class RuleElimination:
         # Reset rule viewer
         self._viewer.reset()
 
-        """
-        # Policy finalizer
-        finalizer_options: Dict[str, Any] = {
-            "simplify_policy": kwargs.get("simplify_policy"),
-            "threshold_for_asp_based_simplification": kwargs.get("threshold_for_asp_based_simplification", 12),
-            "simplify_only_conditions": kwargs.get("simplify_only_conditions", False), # for naive simplification
-            "solve_pending_requirements": kwargs.get("solve_pending_requirements", False),
-        }
-        finalizer: PolicyFinalizer = PolicyFinalizer(self._preprocessing_data, self._viewer._r_idx_to_ext_state, self._viewer._ext_state_to_r_idx, self._annotated_requirements)
-        """
-
         # TODO: Fix error for zenotravel3
         # TODO: Prefer numerical over boolean features
 
@@ -269,28 +258,29 @@ class RuleElimination:
             raise RuntimeError("No solution for given features")
 
         # Finalize policy
-        solution, cost, decorations = self._finalizer(f_idxs, r_idx_to_info, **self._finalizer_options)
-        valuations_for_goals: List[Dict[int, int]] = [{self._finalizer._solution[i]: value for i, value in valuation} for valuation in self._finalizer._feature_valuations_for_goals]
-
-        # Return
-        return {
-            "cost": cost,
-            "solution": sorted(solution),
-            "r_idxs": sorted(r_idx_to_info.keys()),
-            "decorations": decorations,
-            "valuations_for_goals": valuations_for_goals,
-        }
+        result: Dict[str, Any] = self._finalizer(f_idxs, r_idx_to_info, **self._finalizer_options)
+        result.update({"r_idxs": list(r_idx_to_info.keys())})
+        return result
 
     def solutions(self, **kwargs) -> Generator[Dict[str, Any], None, None]:
-        generator: SolutionGenerator = SolutionGenerator(self._preprocessing_data, self._state_factory, **kwargs)
-        for f_idxs, r_idx_to_info in generator(**kwargs):
-            solution, cost, decorations = self._finalizer(f_idxs, r_idx_to_info, **self._finalizer_options)
-            valuations_for_goals: List[Dict[int, int]] = [{self._finalizer._solution[i]: value for i, value in valuation} for valuation in self._finalizer._feature_valuations_for_goals]
-            yield {
-                "cost": cost,
-                "solution": sorted(solution),
-                "r_idxs": sorted(r_idx_to_info.keys()),
-                "decorations": decorations,
-                "valuations_for_goals": valuations_for_goals,
-            }
+        # Control max_num_solutions (if any) here to account for skipped solutions
+        options: Dict[str, Any] = dict(kwargs)
+        max_num_solutions: int = options.pop("max_num_solutions")
+
+        generator: SolutionGenerator = SolutionGenerator(self._preprocessing_data, self._benchmark._state_factory, **options)
+        num_solutions: int = 0
+        for f_idxs, r_idx_to_info in generator(**options):
+            result: Dict[str, Any] = self._finalizer.v2(f_idxs, r_idx_to_info, **self._finalizer_options)
+            if result.get("decorations") is not None:
+                num_solutions += 1
+                result.update({"r_idxs": list(r_idx_to_info.keys())})
+                yield result
+            else:
+                logging.info(f"SKIP SOLUTION")
+            if max_num_solutions is not None and max_num_solutions <= num_solutions: break
+        logging.info(f"{num_solutions} solution(s) generated from max_num_solutions={max_num_solutions}")
+
+
+    def recalculate(self, solution: Dict[str, Any], reasons: List[Dict[str, Any]]) -> Dict[str, Any]:
+        return self._finalizer.recalculate(solution, reasons)
 
