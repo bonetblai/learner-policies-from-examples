@@ -65,7 +65,8 @@ class SketchReduced:
         if self._width == 0:
             successors: List[Tuple[Tuple[int, Any], str]] = [((succ_state_idx, succ_state), action) for (succ_state_idx, succ_state), action in instance_data.get_successors(state_idx) if succ_state_idx != state_idx]
         else:
-            successors: List[int] = list(instance_data.exploration(state_idx, self._width, caching=True) - intbitset([state_idx]))
+            explored: FrozenSet[Tuple[int, Tuple[int, int]]] = instance_data.exploration(state_idx, self._width, caching=True)
+            successors: List[int] = [dst_idx for instance_idx, (src_idx, dst_idx) in explored]
             successors: List[Tuple[Tuple[int, Any], str]] = [(instance_data.get_state(succ_state_idx), "<not-avail>") for succ_state_idx in successors]
         logging.debug(f"[_get_width_successors] ext_state={(instance_data.idx, state_idx)}, width={self._width}, #successors={len(successors)}")
         return successors
