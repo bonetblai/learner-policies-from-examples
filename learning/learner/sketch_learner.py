@@ -28,6 +28,7 @@ def sketch_learner(
     benchmark_only: bool = False,
     # Feature generation
     disable_feature_generation: bool = False,
+    force_feature_generation: bool = False,
     generate_all_distance_features: bool = False,
     concept_complexity_limit: int = 9,
     role_complexity_limit: int = 9,
@@ -43,8 +44,9 @@ def sketch_learner(
     additional_booleans: List[str] = None,
     additional_numericals: List[str] = None,
     # Feature repositories
-    disable_feature_repositories: bool = False,
     all_repositories: bool = False,
+    disable_feature_repositories: bool = False,
+    repository: str = None,
     flexible_repositories: bool = False,
     store_features: bool = False,
     # Feature others
@@ -140,6 +142,7 @@ def sketch_learner(
     feature_pool_options = {
         # Generation
         "disable_feature_generation": disable_feature_generation,
+        "force_feature_generation": force_feature_generation,
         "generate_all_distance_features": generate_all_distance_features,
         "concept_complexity_limit": concept_complexity_limit,
         "role_complexity_limit": role_complexity_limit,
@@ -155,10 +158,11 @@ def sketch_learner(
         "additional_booleans": additional_booleans or [],
         "additional_numericals": additional_numericals or [],
         # Repositories
-        "disable_feature_repositories": disable_feature_repositories,
         "all_repositories": all_repositories,
+        "disable_feature_repositories": disable_feature_repositories,
         "flexible_repositories": flexible_repositories,
         "store_features": store_features,
+        "repository": repository,
         "uuid_str": uuid_str,
     }
     feature_pool: FeaturePool = FeaturePool(benchmark, timers, **feature_pool_options)
@@ -201,7 +205,9 @@ def sketch_learner(
         "max_non_covered_ext_states": 1,
         "randomized_sketch_test": randomized_sketch_test,
         "test_goal_separating_features": False,
-        "solve_pending_requirements": True,
+        #"solve_pending_requirements": True,
+        "solve_pending_requirements": False,
+        "hard_constraints": True,
         "max_num_solutions": 1000,
         "max_cost_bound": 100,
         "max_f_idxs": 5,

@@ -26,7 +26,7 @@ if __name__ == "__main__":
     # Arguments for feature generation
     feature_generation = parser.add_argument_group("Feature generation")
     feature_generation.add_argument("--disable_feature_generation", action=argparse.BooleanOptionalAction, default=False, help="Whether to enable feature generation")
-    feature_generation.add_argument("--force_features", action=argparse.BooleanOptionalAction, default=False, help="Force generation of features")
+    feature_generation.add_argument("--force_feature_generation", action=argparse.BooleanOptionalAction, default=False, help="Force generation of features")
     feature_generation.add_argument("--generate_all_distance_features", action=argparse.BooleanOptionalAction, default=False, help="Whether to enable generation of all distance features")
     feature_generation.add_argument("--complexity_limit", type=int, default=None, help="Sets complexity limit for boolean, count, and distance features (default: None)")
     feature_generation.add_argument("--concept_complexity_limit", type=int, default=9, help="The complexity limit for concepts (default: 9)")
@@ -55,10 +55,11 @@ if __name__ == "__main__":
 
     # Arguments for feature repositories
     feature_repositories = parser.add_argument_group("Feature repositories")
-    feature_repositories.add_argument("--disable_feature_repository", action=argparse.BooleanOptionalAction, default=False, help="Don't look for compatible feature repositories")
     feature_repositories.add_argument("--all_repositories", action=argparse.BooleanOptionalAction, default=False, help="Incorporate features from all repositories")
+    feature_repositories.add_argument("--disable_feature_repository", action=argparse.BooleanOptionalAction, default=False, help="Don't look for compatible feature repositories")
     feature_repositories.add_argument("--flexible_repositories", action=argparse.BooleanOptionalAction, default=False, help="More flexible when looking for compatible feature repository")
     feature_repositories.add_argument("--store_features", action=argparse.BooleanOptionalAction, default=False, help="Whether features should be stored to a file")
+    feature_repositories.add_argument("--repository", type=str, default=None, help="Force feature repository (default: None)")
 
     # Arguments for feature others
     feature_others = parser.add_argument_group("Feature others")
@@ -137,7 +138,7 @@ if __name__ == "__main__":
         "benchmark_only": args.benchmark_only,
         # Feature generation
         "disable_feature_generation": args.disable_feature_generation,
-        "force_features": args.force_features,
+        "force_feature_generation": args.force_feature_generation,
         "generate_all_distance_features": args.generate_all_distance_features,
         "concept_complexity_limit": args.concept_complexity_limit,
         "role_complexity_limit": args.role_complexity_limit,
@@ -153,10 +154,11 @@ if __name__ == "__main__":
         "additional_booleans": args.additional_booleans,
         "additional_numericals": args.additional_numericals,
         # Feature repositories
-        "disable_feature_repositories": args.disable_feature_repository,
         "all_repositories": args.all_repositories,
+        "disable_feature_repositories": args.disable_feature_repository,
         "flexible_repositories": args.flexible_repositories,
         "store_features": args.store_features,
+        "repository": args.repository,
         # Feature others
         "features_only": args.features_only,
         # Learner

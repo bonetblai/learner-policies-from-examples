@@ -29,9 +29,9 @@ class FeatureChange(Enum):
     DOWN = 1
     BOT = 2
 
-def _get_parameters(raw_parameters: Dict[str, Any], flexible: bool) -> Dict[str, Any]:
+def _get_relevant_parameters(raw_parameters: Dict[str, Any], flexible: bool) -> Dict[str, Any]:
     parameters: Dict[str, Any] = dict(raw_parameters)
-    for parameter in ["max_feature_depth"]:
+    for parameter in ["max_feature_depth", "disable_feature_generation"]:
         if parameter in parameters:
             parameters.pop(parameter)
     if flexible:
@@ -40,29 +40,37 @@ def _get_parameters(raw_parameters: Dict[str, Any], flexible: bool) -> Dict[str,
                 parameters.pop(parameter)
     return parameters
 
-def _is_matching_repository(feature_repository: Path, feature_parameters: Dict[str, Any], instance_names: List[str], flexible: bool = False) -> Optional[Dict[str, Any]]:
+def _is_matching_repository(feature_repository: Path, parameters: Dict[str, Any], instance_names: List[str], flexible: bool = False) -> Optional[Dict[str, Any]]:
     compressed: bool = feature_repository.name.endswith("gz") or feature_repository.name.endswith("gzip")
     with (feature_repository.open("r") if not compressed else gzip.open(feature_repository, "rt")) as fd:
         header: List[str] = [fd.readline().strip("\n"), fd.readline().strip("\n"), fd.readline().strip("\n")]
         read_parameters: Dict[str, Any] = eval(header[0])
-        read_parameters: Dict[str, Any] = _get_parameters(read_parameters, flexible)
+        #read_parameters: Dict[str, Any] = _get_relevant_parameters(read_parameters, flexible)
         read_names: List[str] = eval(header[1])
         read_statistics: Dict[str, Any] = eval(header[2])
-        if read_parameters == feature_parameters and (flexible or read_names == instance_names):
-            return read_statistics
-        else:
-            return None
 
-def find_feature_repositories(folder: Path, feature_parameters: Dict[str, Any], instance_names: List[str], all_repositories: bool = False, flexible: bool = False) -> List[Path]:
+        # Check parameter compatibility
+        for key in parameters.keys() & read_parameters.keys():
+            if parameters.get(key) != read_parameters.get(key):
+                return None
+
+        # Check instance names
+        if flexible or instance_names == read_names:
+            return read_statistics
+
+        # Incompatible
+        return None
+
+def find_feature_repositories(folder: Path, parameters: Dict[str, Any], instance_names: List[str], all_repositories: bool = False, flexible: bool = False) -> List[Path]:
     # Collect compatible repositories
     repositories: List[Path] = list(folder.glob("**/*.frepo")) + list(folder.glob("**/*.frepo.gz"))
     compatible_repositories: List[Tuple[Path, Dict[str, Any]]] = []
     if all_repositories:
         return repositories
     else:
+        relevant_parameters: Dict[str, Any] = _get_relevant_parameters(parameters, flexible)
         for feature_repository in repositories:
-            print(feature_repository.name)
-            statistics: Dict[str, Any] = _is_matching_repository(feature_repository, _get_parameters(feature_parameters, flexible), instance_names, flexible)
+            statistics: Dict[str, Any] = _is_matching_repository(feature_repository, relevant_parameters, instance_names, flexible)
             if statistics is not None:
                 compatible_repositories.append((feature_repository, statistics))
             else:
@@ -71,7 +79,6 @@ def find_feature_repositories(folder: Path, feature_parameters: Dict[str, Any], 
         # Find best compatible repository as the one with more features
         best_index = -1
         for index, (feature_repository, statistics) in enumerate(compatible_repositories):
-            print(feature_repository.name,  statistics.get("features", 0))
             if best_index == -1 or (compatible_repositories[best_index][1].get("features", -1) < statistics.get("features", 0)):
                 best_index = index
         return None if best_index == -1 else [compatible_repositories[best_index][0]]
@@ -169,14 +176,14 @@ def _read_features_from_repository(feature_repository: Path,
     return features, r_statistics
 
 def write_features_to_repository(features: List[Feature],
-                                 feature_parameters: Dict[str, Any],
+                                 parameters: Dict[str, Any],
                                  feature_statistics: Dict[str, Any],
                                  instance_names: List[str],
                                  feature_repository: Path,
                                  compressed: bool = True):
     feature_repository.parent.mkdir(parents=True, exist_ok=True)
     with (feature_repository.open("w") if not compressed else gzip.open(feature_repository.with_suffix(feature_repository.suffix + ".gz"), "wt")) as fd:
-        fd.write(f"{str(feature_parameters)}\n")
+        fd.write(f"{str(parameters)}\n")
         fd.write(f"{instance_names}\n")
         fd.write(f"{str(feature_statistics)}\n")
         for feature in features:

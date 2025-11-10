@@ -35,30 +35,36 @@ class FeaturePool:
             "planner": benchmark._planner,
         }
 
-        disable_feature_repositories: bool = kwargs.get("disable_feature_repositories", False)
-        force_features: bool = kwargs.get("force_features", False)
+        # Read other options
+        force_feature_generation: bool = kwargs.get("force_feature_generation", False)
         all_repositories: bool = kwargs.get("all_repositories", False)
+        disable_feature_repositories: bool = kwargs.get("disable_feature_repositories", False)
         flexible_repositories: bool = kwargs.get("flexible_repositories", False)
         store_features: bool = kwargs.get("store_features", False)
         repository_folder: Path = Path("feature_repositories")
+        repository: str = kwargs.get("repository", None)
         uuid_str: str = kwargs.get("uuid_str")
 
+        # Instance names
         instance_names: List[str] = sorted([instance_data.instance_filepath().name for instance_data in benchmark._instance_datas])
 
-        if not disable_feature_repositories:
-            repositories: List[Path] = find_feature_repositories(repository_folder, parameters, instance_names, all_repositories=all_repositories, flexible=flexible_repositories)
-        else:
-            repositories: List[Path] = None
+        # Get list of compatible repositories
+        repositories: List[Path] = []
+        if repository is not None and (repository_folder / repository).exists():
+            repositories: List[Path] = [repository_folder / repository]
 
-        if not force_features and repositories is not None and len(repositories) > 0:
+        if not disable_feature_repositories and len(repositories) == 0:
+            repositories: List[Path] = find_feature_repositories(repository_folder, parameters, instance_names, all_repositories=all_repositories, flexible=flexible_repositories)
+
+        if not force_feature_generation and len(repositories) > 0:
             logging.info(colored(f"Found compatible feature repositories [{', '.join([repository.name for repository in repositories])}]", "blue"))
             pool, statistics = read_features_from_repositories(repositories,
                                                                self._benchmark._domain_data.syntactic_element_factory,
                                                                **kwargs)
         else:
-            if repositories is not None and len(repositories) > 0:
+            if len(repositories) > 0:
                 logging.info(colored(f"Found compatible feature repositories [{', '.join([repository.name for repository in repositories])}]", "blue"))
-                logging.info(colored(f"But option --force_features requested...", "blue"))
+                logging.info(colored(f"But option --force_feature_generation requested...", "blue"))
 
             logging.info(colored("Generating features...", "blue"))
             pool, _, statistics = generate_features(self._benchmark._domain_data.syntactic_element_factory,
@@ -67,7 +73,8 @@ class FeaturePool:
                                                     **kwargs)
         logging.info(f"Feature statistics: {statistics}")
 
-        if store_features and (repositories is None or len(repositories) == 0):
+        # Store generated features
+        if store_features and len(repositories) == 0:
             repository_name: str = kwargs.get("feature_repository_name") or f"repo_{uuid_str}.frepo"
             statistics.update({"uuid": uuid_str, "family": self._benchmark._family_name})
             repository: Path = repository_folder / repository_name
