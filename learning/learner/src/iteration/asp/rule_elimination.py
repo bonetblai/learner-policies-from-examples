@@ -76,8 +76,14 @@ class RuleElimination:
             "simplify_only_conditions": kwargs.get("simplify_only_conditions", False), # for naive simplification
             "threshold_for_asp_based_simplification": kwargs.get("threshold_for_asp_based_simplification", 12),
             "solve_pending_requirements": kwargs.get("solve_pending_requirements", False),
+            "hard_constraints": kwargs.get("hard_constraints", False),
         }
-        self._finalizer: PolicyFinalizer = PolicyFinalizer(self._benchmark, self._preprocessing_data, self._viewer._r_idx_to_ext_state, self._viewer._ext_state_to_r_idx, self._annotated_requirements)
+        self._finalizer: PolicyFinalizer = PolicyFinalizer(self._benchmark,
+                                                           self._preprocessing_data,
+                                                           self._viewer._r_idx_to_ext_state,
+                                                           self._viewer._ext_state_to_r_idx,
+                                                           self._annotated_requirements,
+                                                           **self._finalizer_options)
 
     def _score_fn(self, f_idx: int, chosen: intbitset) -> Tuple[Union[int, float]]:
         feature_index: int = self._f_idx_to_feature_index[f_idx]
@@ -281,6 +287,6 @@ class RuleElimination:
         logging.info(f"{num_solutions} solution(s) generated from max_num_solutions={max_num_solutions}")
 
 
-    def recalculate(self, solution: Dict[str, Any], reasons: List[Dict[str, Any]]) -> Dict[str, Any]:
-        return self._finalizer.recalculate(solution, reasons)
+    def repair(self, solution: Dict[str, Any], reasons: List[Dict[str, Any]]) -> Dict[str, Any]:
+        return self._finalizer.repair(solution, reasons)
 
