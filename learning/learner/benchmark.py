@@ -2,7 +2,7 @@ import logging, sys
 import tempfile
 import uuid
 from termcolor import colored
-from typing import Set, List, Tuple, MutableSet, Dict, Optional, Any, Generator
+from typing import Set, FrozenSet, List, Tuple, MutableSet, Dict, Optional, Any, Generator
 
 import math, random
 import numpy as np
@@ -60,21 +60,21 @@ class Benchmark:
         max_num_instances: int = kwargs.get("max_num_instances", int(1e6))
         idxs_to_be_kept: List[int] = [instance_idx for instance_idx in range(len(self._state_factory._instances)) if instance_idx not in idxs_to_be_removed]
         sorted_idxs_to_be_kept: List[int] = sorted(idxs_to_be_kept, key=lambda idx: len(self._preprocessed_datas[idx].get("planner_output")[1]), reverse=True)
-        sorted_idxs_to_be_kept = sorted_idxs_to_be_kept if max_num_instances is None else sorted_idxs_to_be_kept[:max_num_instances]
 
-        # Additionally, prune instances whose plan revisits a state. For this, plan's state trajectory must be generated
-        non_loopy_idxs_to_be_kept: List[int] = [instance_idx for instance_idx in sorted_idxs_to_be_kept if all(self._non_loopy_state_trajectories(instance_idx))]
-        if len(non_loopy_idxs_to_be_kept) < len(sorted_idxs_to_be_kept):
-            logging.info(f"Further removal of {len(sorted_idxs_to_be_kept) - len(non_loopy_idxs_to_be_kept)} loopy instance(s):")
-            for instance_idx in sorted_idxs_to_be_kept:
-                if instance_idx not in non_loopy_idxs_to_be_kept:
-                    logging.info(f"  {instance_idx}.[{self.get_instance(instance_idx).instance_filepath()}]")
+        # Extract at most max_num_instances
+        final_idxs: List[int] = []
+        for instance_idx in sorted_idxs_to_be_kept:
+            if all(self._non_loopy_state_trajectories(instance_idx)):
+                final_idxs.append(instance_idx)
+            else:
+                logging.info(f"Removal of loopy instance {instance_idx}.[{self.get_instance(instance_idx).instance_filepath()}]")
+            if max_num_instances is not None and len(final_idxs) == max_num_instances: break
 
         # Remove and re-order instances
         previous_number_instances: int = len(self._state_factory._instances)
-        self.remove_and_reorder_instances(non_loopy_idxs_to_be_kept)
-        assert len(non_loopy_idxs_to_be_kept) == len(self._state_factory._instances), (len(non_loopy_idxs_to_be_kept), len(self._state_factory._instances))
-        logging.info(f"{len(non_loopy_idxs_to_be_kept)} instance(s) after removal and re-ordering; {previous_number_instances - len(non_loopy_idxs_to_be_kept)} instance(s) removed")
+        self.remove_and_reorder_instances(final_idxs)
+        assert len(final_idxs) == len(self._state_factory._instances), (len(final_idxs), len(self._state_factory._instances))
+        logging.info(f"{len(final_idxs)} instance(s) after removal and re-ordering; {previous_number_instances - len(final_idxs)} instance(s) removed")
         self.preprocess_instances_final()
 
         if len(self._state_factory._instances) == 0:
@@ -230,8 +230,8 @@ class Benchmark:
         feature_valuations: np.ndarray = compute_feature_valuations_for_dlplan_state(dlplan_state, feature_pool, self._instance_idx_to_denotations_caches)
         return feature_valuations
 
-    def exploration(self, instance_idx: int, state_idx: int, width: int, caching: bool) -> intbitset:
-        return self._state_factory.exploration(instance_idx, state_idx, width, caching)
+    def exploration(self, instance_idx: int, state_idx: int, width: int, caching: bool, verbose: bool = False) -> FrozenSet[Tuple[int, Tuple[int, int]]]:
+        return self._state_factory.exploration(instance_idx, state_idx, width, caching, verbose)
 
     def _preprocess_instance(self, folder_name: str, instance_idx: int, remove_files: bool = True) -> Dict[str, Any]:
         instance_data: PDDLInstance = self._state_factory._instances[instance_idx]
