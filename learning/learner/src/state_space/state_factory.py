@@ -461,7 +461,7 @@ class PDDLInstance:
         # Atoms, tuples and exploration caching
         self._atoms_cache: Dict[int, intbitset] = dict()
         self._tuples_cache: Dict[Tuple[int, int], FrozenSet[intbitset]] = dict()
-        self._explore_cache: Dict[Tuple[int, int], intbitset] = dict()
+        self._exploration_cache: Dict[Tuple[int, int], FrozenSet[Tuple[int, Tuple[int, int]]]] = dict()
 
     def re_index(self, new_instance_idx: int) -> bool:
         if self._instance.re_index(new_instance_idx):
@@ -606,33 +606,41 @@ class PDDLInstance:
         if caching: self._tuples_cache[(state_idx, width)] = tuples
         return tuples
 
-    def exploration(self, root_idx: int, width: int, caching: bool = False) -> intbitset:
+    def exploration(self, root_idx: int, width: int, caching: bool = False, verbose: bool = False) -> FrozenSet[Tuple[int, Tuple[int, int]]]:
         # Revise cache
-        generated: intbitset = self._explore_cache.get((root_idx, width), None)
-        if generated is not None:
-            return generated
+        explored = self._exploration_cache.get((root_idx, width), None)
+        if explored is not None:
+            return explored
 
-        logging.info(f"Exploration from {(self.idx, root_idx)} with width {width}")
+        # If not in cache, do width-based exploration. Exceptional case is for width=0
+        if width == 0:
+            successors: List[Tuple[Tuple[int, Any], str]] = self.get_successors(root_idx)
+            explored: FrozenSet[Tuple[int, Tuple[int, int]]] = frozenset([(self.idx, (root_idx, succ_state_idx)) for (succ_state_idx, _), _ in successors])
+            if caching: self._exploration_cache[(root_idx, width)] = explored
+            return explored
 
-        generated: intbitset = intbitset()
+        if verbose: logging.info(f"Exploration from {(self.idx, root_idx)} with width {width}")
+
         seen_tuples: Set[intbitset] = set()
-        q: deque = deque([root_idx])
+        explored: Set[Tuple[int, Tuple[int, int]]] = set()
+
+        q: deque = deque([(-1, root_idx)])
         while len(q) > 0:
             logging.debug(f"Iteration: seen_tuples={sorted(seen_tuples, key=lambda t: len(t))}")
-            state_idx: int = q.popleft()
-            generated.add(state_idx)
+            parent_idx, state_idx = q.popleft()
             unseen_tuples: FrozenSet[intbitset] = self.get_tuples(state_idx, width, caching) - seen_tuples
-            logging.debug(f" POP: state_idx={state_idx}, unseen_tuples={sorted(unseen_tuples, key=lambda t: len(t))}")
+            if verbose: logging.info(f" POP: state_idx={state_idx}, unseen_tuples={sorted(unseen_tuples, key=lambda t: len(t))}")
             if len(unseen_tuples) > 0:
                 seen_tuples |= unseen_tuples
+                if parent_idx != -1: explored.add((self.idx, (parent_idx, state_idx)))
                 for (succ_state_idx, succ_state), action_str in self.get_successors(state_idx):
-                    q.append(succ_state_idx)
-                    logging.debug(f"PUSH: state_idx{succ_state_idx}")
-        logging.debug(f"Explore: state_idx={state_idx}, width={width}, generated={sorted(generated)}")
+                    q.append((state_idx, succ_state_idx))
+                    logging.debug(f"PUSH: state_idx={succ_state_idx}")
+        if verbose: logging.info(f"Explore: state_idx={state_idx}, width={width}, explored={sorted(explored)}")
 
         # Insert into cache and return
-        if caching: self._explore_cache[(root_idx, width)] = generated
-        return generated
+        if caching: self._exploration_cache[(root_idx, width)] = explored
+        return explored
 
 class StateFactory:
     def __init__(self, family_name: str, domain_filepath: Path, instance_filepaths: List[Path], planner: str, deadends: Optional[bool] = None, using_tarski: bool = True):
@@ -737,6 +745,6 @@ class StateFactory:
     def get_tuples(self, instance_idx: int, state_idx: int, width: int, caching: bool = False) -> FrozenSet[intbitset]:
         return self._instances[instance_idx].get_tuples(state_idx, width, caching)
 
-    def exploration(self, instance_idx: int, root_idx: int, width: int, caching: bool = False) -> List[Any]:
-        return self._instances[instance_idx].exploration(root_idx, width, caching)
+    def exploration(self, instance_idx: int, root_idx: int, width: int, caching: bool = False, verbose: bool = False) -> FrozenSet[Tuple[int, Tuple[int, int]]]:
+        return self._instances[instance_idx].exploration(root_idx, width, caching, verbose)
 
