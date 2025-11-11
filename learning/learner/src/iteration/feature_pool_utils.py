@@ -1,6 +1,6 @@
 import logging
 from termcolor import colored
-from typing import Tuple, List, Dict, Set, Optional, Any
+from typing import Tuple, List, Dict, Set, Optional, Any, Callable
 from pathlib import Path
 from datetime import datetime
 
@@ -190,37 +190,49 @@ def write_features_to_repository(features: List[Feature],
             feature_name: str = str(feature._dlplan_feature)
             fd.write(f"{feature_name}\n")
 
+def prune_features(features: List[Feature], conditions: List[Callable[Feature, bool]]) -> Tuple[List[Feature], Dict[str, Any]]:
+    local_timer: Timer = Timer(stopped=False)
+    non_pruned_features: List[Feature] = []
+    num_features: List[Tuple[int, int]] = [[0, 0, 0], [0, 0, 0]]
+    for feature in features:
+        f_type: int = 0 if isinstance(feature.dlplan_feature, dlplan_core.Numerical) else 1
+        num_features[f_type][0] += 1
+        if any([condition(feature) for condition in conditions]):
+            num_features[f_type][2] += 1
+        else:
+            num_features[f_type][1] += 1
+            non_pruned_features.append(feature)
+    local_timer.stop()
+
+    # Calculate statistics for pruning
+    pruning_stats: Dict[str, Any] = {
+        "numerical": {
+            "remain": num_features[0][1],
+            "pruned": num_features[0][2],
+            "reduction": 0 if num_features[0][0] == 0 else 100 * (1.0 - float(num_features[0][1]) / num_features[0][0]),
+        },
+        "boolean": {
+            "remain": num_features[1][1],
+            "pruned": num_features[1][2],
+            "reduction": 0 if num_features[1][0] == 0 else 100 * (1.0 - float(num_features[1][1]) / num_features[1][0]),
+        },
+        "elapsed_time": local_timer.get_elapsed_sec(),
+    }
+    return non_pruned_features, pruning_stats
+
 def post_process_features(features: List[Feature], **kwargs) -> List[Feature]:
     max_feature_depth = kwargs.get("max_feature_depth")
-    max_depth_pruning_timer: Timer = Timer(stopped=True)
 
     # PRUNE generated features by max-depth complexity
-    max_depth_pruning_timer.resume()
     if max_feature_depth is not None:
-        logging.info(f"Pruning features by max_depth={max_feature_depth}:")
-
-        numerical_features: List[Feature] = [feature for feature in features if isinstance(feature.dlplan_feature, dlplan_core.Numerical)]
-        boolean_features: List[Feature] = [feature for feature in features if isinstance(feature.dlplan_feature, dlplan_core.Boolean)]
-        numerical_features_new: List[Feature] = [feature for feature in numerical_features if _max_depth(str(feature.dlplan_feature)) <= max_feature_depth]
-        boolean_features_new: List[Feature] = [feature for feature in boolean_features if _max_depth(str(feature.dlplan_feature)) <= max_feature_depth]
-
-        pruning_stats = {
-            "numerical": {
-                "pruned": len(numerical_features) - len(numerical_features_new),
-                "remain": len(numerical_features_new),
-                "reduction": 0 if len(numerical_features) == 0 else 100 * (1.0 - float(len(numerical_features_new)) / float(len(numerical_features)))
-            },
-            "boolean": {
-                "pruned": len(boolean_features) - len(boolean_features_new),
-                "remain": len(boolean_features_new),
-                "reduction": 0 if len(boolean_features) == 0 else 100 * (1.0 - float(len(boolean_features_new)) / float(len(boolean_features)))
-            }
-        }
-        for key, stats in pruning_stats.items():
-            logging.info(f"    {key.title()}s: {stats['pruned']} feature(s) pruned; {stats['remain']} feature(s) remain [{stats['reduction']:.1f}% reduction]")
-
-        features: List[Feature] = numerical_features_new + boolean_features_new
-    max_depth_pruning_timer.stop()
+        logging.info(f"  Prune features with 'max_depth > {max_feature_depth}' ...")
+        prune_by_max_depth: Callable[Feature, bool] = lambda feature: _max_depth(str(feature.dlplan_feature)) > max_feature_depth
+        non_pruned_features, pruning_stats = prune_features(features, [prune_by_max_depth])
+        logging.info(f"    {pruning_stats['numerical']['pruned'] + pruning_stats['boolean']['pruned']} feature(s) pruned in {pruning_stats['elapsed_time']:0.2f} second(s)")
+        for key in ["numerical", "boolean"]:
+            stats: Dict[str, Any] = pruning_stats[key]
+            logging.info(f"    - {stats['pruned']} {key} feature(s) pruned; {stats['remain']} feature(s) remain [{stats['reduction']:.1f}% reduction]")
+        features: List[Feature] = non_pruned_features
 
     return features
 

@@ -56,7 +56,7 @@ class FeaturePool:
         if not disable_feature_repositories and len(repositories) == 0:
             repositories: List[Path] = find_feature_repositories(repository_folder, parameters, instance_names, all_repositories=all_repositories, flexible=flexible_repositories)
 
-        if not force_feature_generation and len(repositories) > 0:
+        if not force_feature_generation and repositories is not None and len(repositories) > 0:
             logging.info(colored(f"Found compatible feature repositories [{', '.join([repository.name for repository in repositories])}]", "blue"))
             pool, statistics = read_features_from_repositories(repositories,
                                                                self._benchmark._domain_data.syntactic_element_factory,
@@ -87,5 +87,5 @@ class FeaturePool:
         self._statistics = statistics
 
         self._timers.stop("feature/pool")
-        logging.info(colored(f"Got {len(pool)} Feature(s) in {self._timers.get_elapsed_sec('feature/pool'):.02f} second(s)", "blue"))
+        logging.info(colored(f"Got {len(self._pool)} Feature(s) in {self._timers.get_elapsed_sec('feature/pool'):.02f} second(s)", "blue"))
 
