@@ -81,13 +81,6 @@ if __name__ == "__main__":
     wrapper.add_argument("--randomized_sketch_test", type=int, default=None, help="Whether sketch is randomized rather than fully tested (decreases verification time substantially) (default: None)")
     wrapper.add_argument("--enumerate_solutions", action=argparse.BooleanOptionalAction, default=False, help="Enumerate solutions (default: False)")
 
-
-
-
-
-
-
-
     # General options
     general_options = parser.add_argument_group("General options")
     general_options.add_argument("--disable_state_space_expansion", action=argparse.BooleanOptionalAction, default=False, help="Disable full expansion of state space")
@@ -112,11 +105,10 @@ if __name__ == "__main__":
     other_options.add_argument("--timeout_in_seconds_per_step", type=float, default=1200, help="Timeout in seconds for improvement step for the ASP solver (default: 60)")
     other_options.add_argument("--timeout_in_seconds", type=float, default=3600, help="Timeout in seconds for total time for the ASP solver (default: 3600)")
 
-
-
-
-
+    # Parse arguments
     args = parser.parse_args()
+
+    # Entailed options
     if args.complexity_limit != None:
         args.boolean_complexity_limit = args.complexity_limit
         args.count_numerical_complexity_limit = args.complexity_limit
@@ -125,6 +117,14 @@ if __name__ == "__main__":
             args.concept_complexity_limit = args.complexity_limit
         if args.complexity_limit > args.role_complexity_limit:
             args.role_complexity_limit = args.complexity_limit
+
+    # Check for incompatible combination of options
+    if args.rule_elimination:
+        if not args.enumerate_solutions and args.width > 0:
+            raise RuntimeError("Width must be 0 for non-enumerative rule-elimination solver")
+    else:
+        if args.width > 0:
+            raise RuntimeError("Width must be 0 for feature-elimiation solver")
 
     print(f"Call: python {' '.join(sys.argv)}")
 
