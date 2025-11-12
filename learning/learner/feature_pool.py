@@ -62,7 +62,7 @@ class FeaturePool:
                                                                self._benchmark._domain_data.syntactic_element_factory,
                                                                **kwargs)
         else:
-            if len(repositories) > 0:
+            if repositories is not None and len(repositories) > 0:
                 logging.info(colored(f"Found compatible feature repositories [{', '.join([repository.name for repository in repositories])}]", "blue"))
                 logging.info(colored(f"But option --force_feature_generation requested...", "blue"))
 
