@@ -212,6 +212,7 @@ def sketch_learner(
         "max_cost_bound": 100,
         "max_f_idxs": 5,
         "uniform_costs": uniform_costs,
+        "dump_asp_program": dump_asp_program,
     }
     WrapperClass = WrapperEnumerationV2 if enumerate_solutions else Wrapper
     wrapper: WrapperBase = WrapperClass(benchmark, feature_pool, learner, timers, **wrapper_options)
