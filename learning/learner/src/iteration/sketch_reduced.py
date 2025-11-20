@@ -117,7 +117,7 @@ class SketchReduced:
             if timers["search"].get_elapsed_sec() - last_record > reporting_period:
                 last_record = timers["search"].get_elapsed_sec()
                 elapsed_times: str = "(" + ", ".join([f"{timers[key].get_elapsed_sec():0.2f}" for key in ["search", "expansion", "successors"]]) + ")"
-                logging.info(f"[VERIFY] elapsed_times={elapsed_times}, expanded={expanded}, generated={generated}, #queue={len(queue)}")
+                logging.info(f"[VERIFY] elapsed_times={elapsed_times}, #expanded={expanded}, #generated={generated}, #queue={len(queue)}")
             timers["search"].resume()
 
             root_state_idx = queue.pop()
