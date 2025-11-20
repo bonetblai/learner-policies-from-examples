@@ -4,7 +4,8 @@ from typing import Set, List, Tuple, MutableSet, Dict, Optional, Any, Generator
 
 import random
 import numpy as np
-from collections import defaultdict
+from intbitset import intbitset
+from collections import defaultdict, Counter
 
 import dlplan.core as dlplan_core
 
@@ -41,8 +42,9 @@ class WrapperBase:
         self._ext_state_to_feature_valuations: Dict[Tuple[int, int], np.ndarray] = {ext_state: np.array(feature_valuations) for ext_state, feature_valuations in self._benchmark._ext_state_to_feature_valuations.items()}
         #self._ext_state_to_dlplan_state_index: Dict[Tuple[int, int], int] = {ext_state: dlplan_state_index for ext_state, dlplan_state_index in self._benchmark._ext_state_to_dlplan_state_index.items()}
         self._instance_idx_to_denotations_caches: Dict[int, dlplan_core.DenotationsCaches] = self._benchmark._instance_idx_to_denotations_caches
+        self._setup_registry: Dict[int, intbitset] = defaultdict(intbitset)
 
-    def setup_ext_state(self, ext_state: Tuple[int, int]):
+    def setup_ext_state(self, ext_state: Tuple[int, int], verbose: bool = False) -> bool:
         """
         instance_data: PDDLInstance = self._instance_datas[instance_idx]
         ext_state: Tuple[int, int] = (instance_idx, state_idx)
@@ -59,7 +61,11 @@ class WrapperBase:
             self._ext_state_to_feature_valuations[ext_state] = compute_feature_valuations_for_dlplan_state(dlplan_state, self._feature_pool._pool, self._instance_idx_to_denotations_caches)
         """
         if ext_state not in self._ext_state_to_feature_valuations:
+            if verbose: logging.info(f"Setup_ext_state: ext_state={ext_state}")
             self._ext_state_to_feature_valuations[ext_state] = self._benchmark.get_feature_valuations(*ext_state, self._feature_pool._pool)
+            return True
+        else:
+            return False
 
     def get_unsolved_instances(self,
                                iteration_data: IterationData,
@@ -133,7 +139,7 @@ class WrapperBase:
         elif next_idx > max_seen_idx:
             next_idxs: List[int] = [next_idx]
         else:
-            # CHECK: Following assertion may fail if --randomized_sketch_test
+            # TODO: CHECK: Following assertion may fail if --randomized_sketch_test
             #        1. Learned policy "passes" verification over learning instances.
             #        2. Verification over all instances goes again over learning instances.
             #        3. Second time, over learning instances, verification fails because it reaches a state not seen before.
@@ -165,11 +171,16 @@ class Wrapper(WrapperBase):
             # Setup information for relevant vertices and successors
             logging.info(f"Initializing {len(relevant_vertices)} relevant vertices...")
             for state_idx in relevant_vertices:
-                self.setup_ext_state((instance_idx, state_idx))
-                if not instance_data.is_goal_state(state_idx):
-                    successors: List[Tuple[Tuple[int, Any], str]] = instance_data.get_successors(state_idx)
-                    for (succ_state_idx, succ_state), operator in successors:
-                        self.setup_ext_state((instance_idx, succ_state_idx))
+                if state_idx not in self._setup_registry.get(instance_idx, []):
+                    self.setup_ext_state((instance_idx, state_idx))
+                    if not instance_data.is_goal_state(state_idx):
+                        successors: List[Tuple[Tuple[int, Any], str]] = instance_data.get_successors(state_idx)
+                        logging.info(f"Setup ext_state={(instance_idx, state_idx)}, #successors={len(successors)}")
+                        for (succ_state_idx, succ_state), operator in successors:
+                            self.setup_ext_state((instance_idx, succ_state_idx))
+                    else:
+                        logging.info(f"Setup ext_state={(instance_idx, state_idx)} (goal state)")
+                    self._setup_registry[instance_idx].add(state_idx)
 
         self._timers.stop("preprocessing")
         self._timers.resume("learner")
@@ -182,6 +193,7 @@ class Wrapper(WrapperBase):
         # Solve
         try:
             solution: Dict[str, Any] = self._learner.solve(**self._options)
+            solution.pop("conditions_for_goal") # Don't perform goal-condition test during sketch testing as "non-goal" failures are not repaired
         except RuntimeError as rt:
             logging.info(str(rt))
             self._timers.print(title="Finalizing due to RuntimeError exception...", logger=True)
@@ -211,7 +223,7 @@ class Wrapper(WrapperBase):
 
             # Analyze learned sketch
             self._timers.resume("verification")
-            logging.info(colored(f"Verifying learned sketch on TRAINING instances {iteration_data.current_idxs}...", "blue"))
+            logging.info(colored(f"Verifying learned sketch of width={self._width} on TRAINING instances {iteration_data.current_idxs}...", "blue"))
             unsolved_instances: List[Tuple[PDDLInstance, Any]] = self.get_unsolved_instances(iteration_data, iteration_data.instance_datas, sketch, **{"conditions_for_goal": conditions_for_goal})
             self._timers.stop("verification")
 
@@ -242,9 +254,9 @@ class Wrapper(WrapperBase):
                             else:
                                 unsolved_idxs.add(instance_idx)
                     elif "deadend" in reason:
-                        if not self._options.get("deadends", False): logging.warning(f"WARNING: DEADEND reached even though 'deadends=False'")
+                        if not self._options.get("deadends", False): logging.warning(f"DEADEND reached even though 'deadends=False'")
                         deadend_path: Tuple[Tuple[int, int]] = reason.get("deadend")
-                        logging.info(f"{len(iteration_data.deadend_paths)} deadend path(s); paths={iteration_data.deadend_paths}")
+                        logging.info(f"{len(iteration_data.deadend_paths)} (current) deadend path(s); paths={iteration_data.deadend_paths}")
                         assert deadend_path is not None and deadend_path not in iteration_data.deadend_paths
                         iteration_data.deadend_paths.append(deadend_path)
 
@@ -269,7 +281,7 @@ class Wrapper(WrapperBase):
         while True:
             logging.info(f"ADVANCING to TRAINING instances {current_idxs}")
             logging.info(colored(f"Iteration: {len(trace)}", "red"))
-            with change_dir(str(len(trace)), enable=self._enable_dump_files or self._dump_asp_program):
+            with change_dir(f"outer-{len(trace)}", enable=self._enable_dump_files or self._dump_asp_program):
                 for instance_idx in current_idxs:
                     logging.info(f"    id: {instance_idx}.[{self._instance_datas[instance_idx].instance_filepath()}]")
 
@@ -306,7 +318,7 @@ class Wrapper(WrapperBase):
 
                 # Verify whether sketch solves all instances in benchmark
                 self._timers.resume("verification")
-                logging.info(colored("Verifying learned sketch on ALL instances ({len(self._instance_datas_)} instance(s))...", "blue"))
+                logging.info(colored("Verifying learned sketch of width={self._width} on ALL instances ({len(self._instance_datas_)} instance(s))...", "blue"))
                 unsolved_instances: List[Tuple[PDDLInstance, Any]] = self.get_unsolved_instances(iteration_data, self._instance_datas, sketch)
                 self._timers.stop("verification")
 
@@ -385,11 +397,17 @@ class WrapperEnumeration(WrapperBase):
             # Setup information for relevant vertices and successors
             logging.info(f"Initializing {len(relevant_vertices)} relevant vertices...")
             for state_idx in relevant_vertices:
-                self.setup_ext_state((instance_idx, state_idx))
-                if not instance_data.is_goal_state(state_idx):
-                    successors: List[Tuple[Tuple[int, Any], str]] = instance_data.get_successors(state_idx)
-                    for (succ_state_idx, succ_state), operator in successors:
-                        self.setup_ext_state((instance_idx, succ_state_idx))
+                if state_idx not in self._setup_registry.get(instance_idx, []):
+                    self.setup_ext_state((instance_idx, state_idx))
+                    if not instance_data.is_goal_state(state_idx):
+                        successors: List[Tuple[Tuple[int, Any], str]] = instance_data.get_successors(state_idx)
+                        logging.info(f"Setup ext_state={(instance_idx, state_idx)}, goal=False, #successors={len(successors)}")
+                        for (succ_state_idx, succ_state), operator in successors:
+                            self.setup_ext_state((instance_idx, succ_state_idx))
+                    else:
+                        logging.info(f"Setup ext_state={(instance_idx, state_idx)}, goal=True")
+                    self._setup_registry[instance_idx].add(state_idx)
+
         self._timers.stop("preprocessing")
 
         yield from self._learner.solutions(**self._options)
@@ -421,7 +439,7 @@ class WrapperEnumeration(WrapperBase):
 
                 # Analyze learned sketch
                 self._timers.resume("verification")
-                logging.info(colored(f"Verifying learned sketch on TRAINING instances {iteration_data.current_idxs}...", "blue"))
+                logging.info(colored(f"Verifying learned sketch of width={self._width} on TRAINING instances {iteration_data.current_idxs}...", "blue"))
                 unsolved_instances: List[Tuple[PDDLInstance, Any]] = self.get_unsolved_instances(iteration_data, iteration_data.instance_datas, sketch, **{"conditions_for_goal": conditions_for_goal})
                 self._timers.stop("verification")
 
@@ -430,7 +448,7 @@ class WrapperEnumeration(WrapperBase):
 
                     # Verify whether sketch solves all instances in benchmark
                     self._timers.resume("verification")
-                    logging.info(colored("Verifying learned sketch on ALL instances...", "blue"))
+                    logging.info(colored("Verifying learned sketch of width={self._width} on ALL instances...", "blue"))
                     unsolved_instances: List[Tuple[PDDLInstance, Any]] = self.get_unsolved_instances(iteration_data, self._instance_datas, sketch, **{"conditions_for_goal": conditions_for_goal})
                     self._timers.stop("verification")
 
@@ -486,7 +504,7 @@ class WrapperEnumeration(WrapperBase):
             # There are no more solutions, either because ran out of resources (i.e., #solutions or max cost bound),
             # or there is not sufficient expressivity in pool of features
             # TODO: CHECK CASE
-            assert False, "Ran out of solutions"
+            raise RuntimeError("Ran out of solutions")
 
             node_statistics: Dict[str, Any] = self._get_node_statistics()
             logging.info(f"Statistics: {node_statistics}")
@@ -501,7 +519,6 @@ class WrapperEnumeration(WrapperBase):
                 return None, unsolved_idxs
 
         raise RuntimeError("Control shouldn't reach here")
-        assert False
 
     def _outer_loop(self) -> Tuple[SketchReduced, List[IterationData]]:
         self._total_inner_iterations: int = 0
@@ -516,7 +533,7 @@ class WrapperEnumeration(WrapperBase):
         while True:
             logging.info(f"ADVANCING to TRAINING instances {current_idxs}")
             logging.info(colored(f"Iteration: {len(trace)}", "red"))
-            with change_dir(str(len(trace)), enable=self._enable_dump_files or self._dump_asp_program):
+            with change_dir(f"outer-{len(trace)}", enable=self._enable_dump_files or self._dump_asp_program):
                 for instance_idx in current_idxs:
                     logging.info(f"    id: {instance_idx}.[{self._instance_datas[instance_idx].instance_filepath()}]")
 
@@ -630,108 +647,177 @@ class WrapperEnumerationV2(WrapperBase):
             # Setup information for relevant vertices and successors
             logging.info(f"Initializing {len(relevant_vertices)} relevant vertices...")
             for state_idx in relevant_vertices:
-                self.setup_ext_state((instance_idx, state_idx))
-                if not instance_data.is_goal_state(state_idx):
-                    successors: List[Tuple[Tuple[int, Any], str]] = instance_data.get_successors(state_idx)
-                    for (succ_state_idx, succ_state), operator in successors:
-                        self.setup_ext_state((instance_idx, succ_state_idx))
+                if state_idx not in self._setup_registry.get(instance_idx, []):
+                    self.setup_ext_state((instance_idx, state_idx))
+                    if not instance_data.is_goal_state(state_idx):
+                        successors: List[Tuple[Tuple[int, Any], str]] = instance_data.get_successors(state_idx)
+                        logging.info(f"Setup ext_state={(instance_idx, state_idx)}, goal=False, #successors={len(successors)}")
+                        for (succ_state_idx, succ_state), operator in successors:
+                            self.setup_ext_state((instance_idx, succ_state_idx))
+                    else:
+                        logging.info(f"Setup ext_state={(instance_idx, state_idx)}, goal=True")
+                    self._setup_registry[instance_idx].add(state_idx)
+
         self._timers.stop("preprocessing")
 
-        yield from self._learner.solutions(**self._options)
+        non_covered_ext_states: List[Tuple[int, int]] = [(instance_idx, state_idx) for instance_idx, state_idxs in iteration_data.non_covered_vertices.items() for state_idx in state_idxs]
+        yield from self._learner.solutions(non_covered_ext_states, **self._options)
 
-    def _recalculate(self, solution: Dict[str, Any], reasons: List[Dict[str, Any]]) -> Dict[str, Any]:
-        return self._learner.recalculate(solution, reasons)
+    def _repair(self, solution: Dict[str, Any], reasons: List[Dict[str, Any]]) -> Dict[str, Any]:
+        return self._learner.repair(solution, reasons)
 
     def _inner_loop(self, iteration_data: IterationData) -> Tuple[SketchReduced, Set[int]]:
         # Inner loop, at each iteration one or more relevant vertices are added
         iteration_data.inner_iterations: int = 0
-        non_sound_ext_states: Set[Tuple[int, int]] = set()
-        while True:
-            logging.info(f"New Inner ITERATION {iteration_data.inner_iterations} (total={self._total_inner_iterations}): Memory usage={memory_usage() / 1024:0.2f} GiB")
-            iteration_data.inner_iterations += 1
-            self._total_inner_iterations += 1
+        max_num_restarts: int = 25
+        max_num_failures: int = 1
+        max_num_ext_states_added: int = 2
 
-            for solution_idx, solution in enumerate(self._solutions(iteration_data)):
-                logging.info(colored(f"Got solution {1 + solution_idx}: cost={solution.get('cost')}, f_idxs={solution.get('f_idxs')}", "green"))
-                assert solution.get("f_idxs") is not None
+        num_ext_states_added: int = 0
+        for enumeration_id in range(max_num_restarts):
+            logging.info(f"New enumeration {iteration_data.inner_iterations} (total={self._total_inner_iterations}): Memory usage={memory_usage() / 1024:0.2f} GiB")
+            with change_dir(f"enum-{enumeration_id}", enable=self._enable_dump_files or self._dump_asp_program):
+                iteration_data.inner_iterations += 1
+                self._total_inner_iterations += 1
 
-                while solution.get("rules_with_decorations") is not None:
-                    f_idxs: List[int] = solution.get("f_idxs")
-                    rules_with_decorations: Set[Tuple[dlplan_policy.Rule, FrozenSet[int], FrozenSet[int]]] = solution.get("rules_with_decorations")
-                    conditions_for_goal: List[Dict[int, int]] = solution.get("conditions_for_goal")
-                    logging.info(f"Conditions for goal: f_idxs={f_idxs}, conditions={conditions_for_goal}")
+                num_failures: int = 0
+                non_sound_ext_states: List[Tuple[int, int]] = []
+                for solution_idx, solution in enumerate(self._solutions(iteration_data)):
+                    logging.info(colored(f"Got solution {1 + solution_idx}: cost={solution.get('cost')}, f_idxs={solution.get('f_idxs')}", "green"))
+                    assert solution.get("f_idxs") is not None
 
-                    # Create sketch from solution
-                    dlplan_policy = D2sepDlplanPolicyFactory().make_dlplan_policy_from_rules_with_decorations(f_idxs, rules_with_decorations, self._policy_builder, iteration_data)
-                    sketch = SketchReduced(self._benchmark._state_factory, iteration_data.feature_pool, f_idxs, dlplan_policy, self._width)
-                    logging.info("Sketch:")
-                    sketch.print(logger=True)
+                    while solution.get("rules_with_decorations") is not None:
+                        f_idxs: List[int] = solution.get("f_idxs")
+                        rules_with_decorations: Set[Tuple[dlplan_policy.Rule, FrozenSet[int], FrozenSet[int]]] = solution.get("rules_with_decorations")
+                        conditions_for_goal: List[Dict[int, int]] = solution.get("conditions_for_goal")
+                        logging.info(f"Conditions for goal: f_idxs={f_idxs}, conditions={conditions_for_goal}")
 
-                    # Analyze learned sketch
-                    self._timers.resume("verification")
-                    logging.info(colored(f"Verifying learned sketch on TRAINING instances {iteration_data.current_idxs}...", "blue"))
-                    unsolved_instances: List[Tuple[PDDLInstance, Any]] = self.get_unsolved_instances(iteration_data, iteration_data.instance_datas, sketch, **{"conditions_for_goal": conditions_for_goal})
-                    self._timers.stop("verification")
+                        # Create sketch from solution
+                        dlplan_policy = D2sepDlplanPolicyFactory().make_dlplan_policy_from_rules_with_decorations(f_idxs, rules_with_decorations, self._policy_builder, iteration_data)
+                        sketch = SketchReduced(self._benchmark._state_factory, iteration_data.feature_pool, f_idxs, dlplan_policy, self._width)
+                        logging.info("Sketch:")
+                        sketch.print(logger=True)
 
-                    if len(unsolved_instances) == 0:
-                        logging.info(f"Sketch SOLVES TRAINING instances {iteration_data.current_idxs}")
+                        # Check verification
+                        assert "verify_closure" in solution and "verify_bad_edges" in solution, solution
+                        verify_closure: List[Tuple[Tuple[int, int]]] = solution.get("verify_closure")
+                        verify_bad_edges: List[Tuple[int, Tuple[int, int]]] = solution.get("verify_bad_edges")
+                        if verify_closure is not None and len(verify_closure) > 0:
+                            logging.warning(f"Verify closure: {verify_closure}")
+                            assert False
+                        if verify_bad_edges is not None and len(verify_bad_edges) > 0:
+                            logging.warning(f"Verify bad edges: {verify_bad_edges}")
+                            assert False
 
-                        # Verify whether sketch solves all instances in benchmark
+                        # Analyze learned sketch
                         self._timers.resume("verification")
-                        logging.info(colored("Verifying learned sketch on ALL instances...", "blue"))
-                        unsolved_instances: List[Tuple[PDDLInstance, Any]] = self.get_unsolved_instances(iteration_data, self._instance_datas, sketch, **{"conditions_for_goal": conditions_for_goal})
+                        logging.info(colored(f"Verifying learned sketch of width={self._width} on TRAINING instances {iteration_data.current_idxs}...", "blue"))
+                        unsolved_instances: List[Tuple[PDDLInstance, Any]] = self.get_unsolved_instances(iteration_data, iteration_data.instance_datas, sketch, **{"conditions_for_goal": conditions_for_goal})
                         self._timers.stop("verification")
 
                         if len(unsolved_instances) == 0:
-                            logging.info(colored(f"Sketch SOLVES ALL {len(self._instance_datas)} instance(s)! [Bundle: {iteration_data.paths_with_idx}]", "blue"))
-                            node_statistics: Dict[str, Any] = self._get_node_statistics()
-                            logging.info(f"Statistics: {node_statistics}")
-                            return sketch, None
+                            logging.info(f"Sketch SOLVES TRAINING instances {iteration_data.current_idxs}")
 
-                    # If control reaches here, there are unsolved instances for this solution
-                    reasons: List[Dict[str, Any]] = []
-                    new_non_sound_ext_states: Set[Tuple[int, int]] = set()
-                    for instance_data, reason in unsolved_instances:
-                        if "non-closed" in reason:
-                            assert False, "non-closed"
-                        elif "non-sound" in reason:
-                            for ext_state in reason.get("non-sound", []):
-                                non_sound_ext_states.add(ext_state)
-                                reason: Dict[str, Any] = {"non-sound": {ext_state}}
+                            # Verify whether sketch solves all instances in benchmark
+                            self._timers.resume("verification")
+                            logging.info(colored("Verifying learned sketch of width={self._width} on ALL instances...", "blue"))
+                            unsolved_instances: List[Tuple[PDDLInstance, Any]] = self.get_unsolved_instances(iteration_data, self._instance_datas, sketch, **{"conditions_for_goal": conditions_for_goal})
+                            self._timers.stop("verification")
+
+                            if len(unsolved_instances) == 0:
+                                logging.info(colored(f"Sketch SOLVES ALL {len(self._instance_datas)} instance(s)! [Bundle: {iteration_data.paths_with_idx}]", "blue"))
+                                node_statistics: Dict[str, Any] = self._get_node_statistics()
+                                logging.info(f"Statistics: {node_statistics}")
+                                return sketch, None
+
+                        # If control reaches here, there are unsolved instances for this solution
+                        reasons: List[Dict[str, Any]] = []
+                        for instance_data, reason in unsolved_instances:
+                            if "non-closed" in reason:
+                                raise RuntimeError("Case of 'non-closed' in reason not yet implemented")
+                            elif "non-sound" in reason:
+                                for instance_idx, state_idx in reason.get("non-sound", []):
+                                    if instance_idx in iteration_data.current_idxs:
+                                        logging.warning(f"Adding ext_state {(instance_idx, state_idx)} to non-sound vertices")
+                                        assert state_idx not in iteration_data.non_covered_vertices.get(instance_idx, set())
+                                        non_sound_ext_states.append((instance_idx, state_idx))
+                                        #logging.warning(f"Adding ext_state {(instance_idx, state_idx)} to non-covered vertices")
+                                        #assert state_idx not in iteration_data.non_covered_vertices.get(instance_idx, set())
+                                        #assert state_idx not in iteration_data.relevant_vertices.get(instance_idx, set())
+                                        #iteration_data.non_covered_vertices[instance_idx].add(state_idx)
+                                        #iteration_data.relevant_vertices[instance_idx].add(state_idx)
+                                        #reason: Dict[str, Any] = {"non-sound": {(instance_idx, state_idx)}}
+                                        #reasons.append(reason)
+                                        num_failures += 1
+                            elif "non-goal" in reason:
+                                ext_state, conditions = reason.get("non-goal")
+                                reason: Dict[str, Any] = {"non-goal": {ext_state}}
                                 reasons.append(reason)
-                                logging.info(f"Adding ext_state {ext_state} to non-sound vertices")
-                        elif "non-goal" in reason:
-                            ext_state, conditions = reason.get("non-goal")
-                            reason: Dict[str, Any] = {"non-goal": {ext_state}}
-                            reasons.append(reason)
-                        elif "deadend" in reason:
-                            raise RuntimeError("Case of 'deadend' in reason not yet implemented")
+                                num_failures += 1
+                            elif "deadend" in reason:
+                                raise RuntimeError("Case of 'deadend' in reason not yet implemented")
+                            else:
+                                raise RuntimeError(f"Unknown reason: {reason}")
+
+                        # Try to recover by recalculating decorations
+                        # NOTES: Repair is not sufficient. Need to incorporate new state and action for it, and recompute.
+                        # Maybe after failed repair, until no solution.
+                        if len(reasons) > 0:
+                            solution: Dict[str, Any] = self._repair(solution, reasons)
                         else:
-                            raise RuntimeError(f"Unknown reason: {reason}")
+                            break
 
-                    # Try to recover by recalculating decorations
-                    solution: Dict[str, Any] = self._recalculate(solution, reasons)
-                logging.info(f"MOVE TO NEXT SOLUTION")
+                    # If number of discovered non-sound states is too high, break to
+                    # add them to relevant vertices and start again enumeration of solutions
+                    if num_failures >= max_num_failures:
+                        num_ext_states_added_iteration: int = 0
+                        counter_for_non_sound_ext_states: Counter = Counter(non_sound_ext_states)
+                        print(f"counter_for_non_sound_ext_states: {counter_for_non_sound_ext_states}")
+                        for (instance_idx, state_idx), count in counter_for_non_sound_ext_states.most_common(max_num_ext_states_added):
+                            assert state_idx not in iteration_data.non_covered_vertices[instance_idx]
+                            logging.warning(f"Adding ext_state {(instance_idx, state_idx)} to non-covered vertices (count={count})")
+                            iteration_data.non_covered_vertices[instance_idx].add(state_idx)
+                            iteration_data.relevant_vertices[instance_idx].add(state_idx)
+                            num_ext_states_added_iteration += 1
+                            num_ext_states_added += 1
+                        logging.warning(f"RESTART: enumeration_id={enumeration_id + 1}, #failures={num_failures}, #non_sound_ext_states={len(frozenset(non_sound_ext_states))}, #added={(num_ext_states_added_iteration, num_ext_states_added)}")
+                        break
+                    else:
+                        logging.warning(f"MOVE TO NEXT SOLUTION")
 
-            # There are no more solutions, either because ran out of resources (i.e., #solutions or max cost bound),
-            # or there is not sufficient expressivity in pool of features
-            # TODO: CHECK CASE
-            assert False, "Ran out of solutions"
+                # Setup information for next enumeration
+                self._timers.resume("preprocessing")
 
-            node_statistics: Dict[str, Any] = self._get_node_statistics()
-            logging.info(f"Statistics: {node_statistics}")
+                # Relevant vertices must be those in example paths, deadend paths, and non-covered vertices
+                for instance_idx, relevant_vertices in iteration_data.relevant_vertices.items():
+                    vertices_in_paths: Set[int] = set().union(*[path for idx, path in iteration_data.paths_with_idx if idx == instance_idx])
+                    assert vertices_in_paths.issubset(relevant_vertices)
+                    assert iteration_data.vertices_in_deadend_paths.get(instance_idx, set()).issubset(relevant_vertices)
+                    assert iteration_data.non_covered_vertices.get(instance_idx, set()).issubset(relevant_vertices)
 
-            # If no solution, return to outer loop
-            if len(solution_idx_to_unsolved_instances) == 0:
-                return None, None
+                self._timers.stop("preprocessing")
+                continue
+                raise RuntimeError("Ran out of solutions")
 
-            # If sketch solves training instances but not benchmark, return to outer loop
-            if len(unsolved_idxs) > 0:
-                assert len(set(iteration_data.current_idxs) & unsolved_idxs) == 0
-                return None, unsolved_idxs
+
+
+                # There are no more solutions, either because ran out of resources (i.e., #solutions or max cost bound),
+                # or there is not sufficient expressivity in pool of features
+                raise RuntimeError("Ran out of solutions")
+
+                node_statistics: Dict[str, Any] = self._get_node_statistics()
+                logging.info(f"Statistics: {node_statistics}")
+
+                # If no solution, return to outer loop
+                if len(solution_idx_to_unsolved_instances) == 0:
+                    return None, None
+
+                # If sketch solves training instances but not benchmark, return to outer loop
+                if len(unsolved_idxs) > 0:
+                    assert len(set(iteration_data.current_idxs) & unsolved_idxs) == 0
+                    return None, unsolved_idxs
 
         raise RuntimeError("Control shouldn't reach here")
-        assert False
 
     def _outer_loop(self) -> Tuple[SketchReduced, List[IterationData]]:
         self._total_inner_iterations: int = 0
@@ -739,15 +825,16 @@ class WrapperEnumerationV2(WrapperBase):
         previous_idxs: List[int] = []
 
         # Get initial set of instances
-        #current_idxs: List[int] = self.get_initial_idxs()
-        current_idxs: List[int] = [0, 1]
+        current_idxs: List[int] = self.get_initial_idxs()
+        #logging.warning("INITIAL IDXS SET TO [0, 1]")
+        #current_idxs: List[int] = [0, 1]
         assert len(current_idxs) > 0
 
         # Outer loop
         while True:
             logging.info(f"ADVANCING to TRAINING instances {current_idxs}")
             logging.info(colored(f"Iteration: {len(trace)}", "red"))
-            with change_dir(str(len(trace)), enable=self._enable_dump_files or self._dump_asp_program):
+            with change_dir(f"outer-{len(trace)}", enable=self._enable_dump_files or self._dump_asp_program):
                 for instance_idx in current_idxs:
                     logging.info(f"    id: {instance_idx}.[{self._instance_datas[instance_idx].instance_filepath()}]")
 
@@ -785,6 +872,8 @@ class WrapperEnumerationV2(WrapperBase):
 
                 if sketch is None and unsolved_idxs is None:
                     # No solution found, abort
+                    logging.warning("CONTINUE")
+                    continue
                     break
                 elif unsolved_idxs is None:
                     # Sketch solves the whole benchmark
