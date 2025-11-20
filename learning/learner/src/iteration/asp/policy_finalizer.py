@@ -31,7 +31,8 @@ class Verifier:
                  r_idx_to_ext_state: List[Tuple[int, int]],
                  ext_state_to_ext_edge: Dict[Tuple[int, int], Tuple[int, Tuple[int, int]]],
                  ext_state_to_feature_valuations: Dict[Tuple[int, int], np.ndarray],
-                 numerical_f_idxs: intbitset):
+                 numerical_f_idxs: intbitset,
+                 disable_yields: bool = False):
         self._solution: List[int] = solution
         self._r_idx_to_info: Dict[int, Tuple[int, intbitset]] = r_idx_to_info
         self._decorations: Dict[str, Dict[int, Dict[int, intbitset]]] = decorations
@@ -46,45 +47,51 @@ class Verifier:
         self._dont_care: Dict[int, Dict[int, intbitset]] = self._decorations.get("dont_care", dict())
         self._unknown: Dict[int, Dict[int, intbitset]] = self._decorations.get("unknown", dict())
 
-        self._yields: List[Tuple[int]] = list(product(*[(0, 1) for _ in self._solution]))
-        self._yield_to_yield_id: Dict[Tuple[int], int] = {yield_: yield_id for yield_id, yield_ in enumerate(self._yields)}
+        if disable_yields:
+            self._yields: List[Tuple[int]] = None
+            self._yield_to_yield_id: Dict[Tuple[int], int] = None
+            self._yields_goal: intbitset = None
+            self._yields_alive: intbitset = None
+        else:
+            self._yields: List[Tuple[int]] = list(product(*[(0, 1) for _ in self._solution]))
+            self._yield_to_yield_id: Dict[Tuple[int], int] = {yield_: yield_id for yield_id, yield_ in enumerate(self._yields)}
 
-        # Goal yields
-        self._yields_goal: intbitset = None
-        if self._conditions_for_goal is not None:
-            self._yields_goal: intbitset = intbitset()
-            for yield_id, yield_ in enumerate(self._yields):
-                for condition in self._conditions_for_goal:
-                    compatible: bool = True
-                    for i, f_idx in enumerate(self._solution):
-                        if (yield_[i] > 0 and condition[f_idx] == 0) or (yield_[i] == 0 and condition[f_idx] > 0):
-                            compatible = False
-                            break
-                    if compatible: self._yields_goal.add(yield_id)
+            # Goal yields
+            self._yields_goal: intbitset = None
+            if self._conditions_for_goal is not None:
+                self._yields_goal: intbitset = intbitset()
+                for yield_id, yield_ in enumerate(self._yields):
+                    for condition in self._conditions_for_goal:
+                        compatible: bool = True
+                        for i, f_idx in enumerate(self._solution):
+                            if (yield_[i] > 0 and condition[f_idx] == 0) or (yield_[i] == 0 and condition[f_idx] > 0):
+                                compatible = False
+                                break
+                        if compatible: self._yields_goal.add(yield_id)
 
-        # Compute possible outputs for each rule
-        self._compute_possible_outputs_for_each_rule()
+            # Compute possible outputs for each rule
+            self._compute_possible_outputs_for_each_rule()
 
-        # Alive yields
-        self._yields_alive: intbitset = intbitset(range(len(self._yields)))
-        if self._yields_goal is not None: self._yields_alive -= self._yields_goal
-        #print(f"Before FP: yields_for_r_idxs={sorted(self._yields_for_r_idxs)}, issubset={self._yields_for_r_idxs.issubset(self._yields_alive)}")
-        #print(f"Before FP:      yields_alive={sorted(self._yields_alive)}")
-        change_alive: bool = True
-        while change_alive:
-            change_alive: bool = False
-            yields_to_remove: intbitset = intbitset()
-            for yield_id in self._yields_alive - self._yields_for_r_idxs:
-                if len(self._output_yield_to_r_idx_to_input_yields[yield_id]) == 0:
-                    yields_to_remove.add(yield_id)
-                else:
-                    support: intbitset = intbitset.union(*[r_idx_support for r_idx, r_idx_support in self._output_yield_to_r_idx_to_input_yields[yield_id].items()])
-                    if len(support & self._yields_alive) == 0:
+            # Alive yields
+            self._yields_alive: intbitset = intbitset(range(len(self._yields)))
+            if self._yields_goal is not None: self._yields_alive -= self._yields_goal
+            #print(f"Before FP: yields_for_r_idxs={sorted(self._yields_for_r_idxs)}, issubset={self._yields_for_r_idxs.issubset(self._yields_alive)}")
+            #print(f"Before FP:      yields_alive={sorted(self._yields_alive)}")
+            change_alive: bool = True
+            while change_alive:
+                change_alive: bool = False
+                yields_to_remove: intbitset = intbitset()
+                for yield_id in self._yields_alive - self._yields_for_r_idxs:
+                    if len(self._output_yield_to_r_idx_to_input_yields[yield_id]) == 0:
                         yields_to_remove.add(yield_id)
-            change_alive: bool = len(yields_to_remove) > 0
-            self._yields_alive -= yields_to_remove
-        #print(f" After FP: yields_for_r_idxs={sorted(self._yields_for_r_idxs)}, issubset={self._yields_for_r_idxs.issubset(self._yields_alive)}")
-        #print(f" After FP:      yields_alive={sorted(self._yields_alive)}")
+                    else:
+                        support: intbitset = intbitset.union(*[r_idx_support for r_idx, r_idx_support in self._output_yield_to_r_idx_to_input_yields[yield_id].items()])
+                        if len(support & self._yields_alive) == 0:
+                            yields_to_remove.add(yield_id)
+                change_alive: bool = len(yields_to_remove) > 0
+                self._yields_alive -= yields_to_remove
+            #print(f" After FP: yields_for_r_idxs={sorted(self._yields_for_r_idxs)}, issubset={self._yields_for_r_idxs.issubset(self._yields_alive)}")
+            #print(f" After FP:      yields_alive={sorted(self._yields_alive)}")
 
     def _is_boolean(self, f_idx: int) -> bool:
         return f_idx not in self._numerical_f_idxs
@@ -349,7 +356,8 @@ class _NaiveFinalizer(_PolicyFinalizer):
                                       self._r_idx_to_ext_state,
                                       self._ext_state_to_ext_edge,
                                       self._ext_state_to_feature_valuations,
-                                      self._numerical_f_idxs)
+                                      self._numerical_f_idxs,
+                                      disable_yields=True)
 
         # Return result
         result: Dict[str, Any] = {
@@ -850,7 +858,8 @@ class PolicyFinalizer:
     def __call__(self, f_idxs: intbitset, r_idx_to_info: Dict[int, Tuple[int, intbitset]], **kwargs) -> Dict[str, Any]:
         if self._options.get("solve_pending_requirements", False):
             solution, difference = self.solve_pending_requirements(f_idxs)
-            logging.info(f"Patched solution={sorted(solution)}, difference={sorted(difference)}")
+            if solution != f_idxs:
+                logging.info(f"Patched solution={sorted(solution)}, difference={sorted(difference)}")
         else:
             solution: intbitset = f_idxs
 
