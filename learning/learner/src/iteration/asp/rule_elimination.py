@@ -33,9 +33,10 @@ def _partition_r_idxs_with_f_idx(r_idxs: intbitset, f_idx: int, viewer: RuleView
 
 
 class RuleElimination:
-    def __init__(self, benchmark: Any, preprocessing_data: Dict[str, Any], **kwargs):
+    def __init__(self, benchmark: Any, preprocessing_data: Dict[str, Any], non_sound_ext_states: Set[Tuple[int, int]], **kwargs):
         self._benchmark: Any = benchmark
         self._preprocessing_data: Dict[str, Any] = preprocessing_data
+        self._non_sound_ext_states: Set[Tuple[int, int]] = non_sound_ext_states
         self._simplify_policy: bool = kwargs.get("simplify_policy", False)
         self._simplify_only_conditions: bool = kwargs.get("simplify_only_conditions", False)
         self._uniform_costs: bool = kwargs.get("uniform_costs", False)
@@ -74,15 +75,17 @@ class RuleElimination:
         self._finalizer_options: Dict[str, Any] = {
             "simplify_policy": kwargs.get("simplify_policy"),
             "simplify_only_conditions": kwargs.get("simplify_only_conditions", False), # for naive simplification
-            "threshold_for_asp_based_simplification": kwargs.get("threshold_for_asp_based_simplification", 12),
+            "threshold_for_asp_based_simplification": kwargs.get("threshold_for_asp_based_simplification", 10),
             "solve_pending_requirements": kwargs.get("solve_pending_requirements", False),
             "hard_constraints": kwargs.get("hard_constraints", False),
+            "dump_asp_program": kwargs.get("dump_asp_program", False),
         }
         self._finalizer: PolicyFinalizer = PolicyFinalizer(self._benchmark,
                                                            self._preprocessing_data,
                                                            self._viewer._r_idx_to_ext_state,
                                                            self._viewer._ext_state_to_r_idx,
                                                            self._annotated_requirements,
+                                                           self._non_sound_ext_states,
                                                            **self._finalizer_options)
 
     def _score_fn(self, f_idx: int, chosen: intbitset) -> Tuple[Union[int, float]]:
@@ -268,21 +271,21 @@ class RuleElimination:
         result.update({"r_idxs": list(r_idx_to_info.keys())})
         return result
 
-    def solutions(self, **kwargs) -> Generator[Dict[str, Any], None, None]:
+    def solutions(self, other_ext_states: List[Tuple[int, int]], **kwargs) -> Generator[Dict[str, Any], None, None]:
         # Control max_num_solutions (if any) here to account for skipped solutions
         options: Dict[str, Any] = dict(kwargs)
         max_num_solutions: int = options.pop("max_num_solutions")
 
         generator: SolutionGenerator = SolutionGenerator(self._preprocessing_data, self._benchmark._state_factory, **options)
         num_solutions: int = 0
-        for f_idxs, r_idx_to_info in generator(**options):
-            result: Dict[str, Any] = self._finalizer.v2(f_idxs, r_idx_to_info, **self._finalizer_options)
+        for f_idxs, r_idx_to_info in generator(other_ext_states, **options):
+            result: Dict[str, Any] = self._finalizer(f_idxs, r_idx_to_info, **self._finalizer_options)
             if result.get("decorations") is not None:
                 num_solutions += 1
                 result.update({"r_idxs": list(r_idx_to_info.keys())})
                 yield result
             else:
-                logging.info(f"SKIP SOLUTION")
+                logging.warning(f"SKIP SOLUTION: finalizer failed")
             if max_num_solutions is not None and max_num_solutions <= num_solutions: break
         logging.info(f"{num_solutions} solution(s) generated from max_num_solutions={max_num_solutions}")
 
