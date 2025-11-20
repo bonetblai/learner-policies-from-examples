@@ -47,12 +47,12 @@ class ASPSolver:
 
     def ground(self, *fact_dicts: Tuple[Dict[str, Any]], verbose: bool = False, dump_asp_program: bool = False):
         facts = [fact for fact_dict in fact_dicts for facts in fact_dict.values() for fact in facts]
-        logging.info(f"Grounding logic program with {len(facts)} fact(s)...")
         if dump_asp_program:
             def quote(s): return f'"{s}"'
             logging.info(f"Dumping logic proram to '{Path(os.getcwd()) / 'program.lp'}'...")
             write_file_lines("program.lp", [f"{fact[0]}({','.join([str(arg.number) if arg.type.name == 'Number' else quote(arg.string) for arg in fact[1]])}).\n" for fact in facts])
             #for line in [f"{fact[0]}({','.join([str(arg.number) if arg.type.name == 'Number' else quote(arg.string) for arg in fact[1]])})." for fact in facts]: print(line)
+        logging.info(f"Grounding logic program with {len(facts)} fact(s)...")
         self._ctl.ground(facts + [("base", [])])
 
     def optimize_model(self,
