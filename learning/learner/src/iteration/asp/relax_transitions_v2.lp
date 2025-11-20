@@ -7,7 +7,7 @@
 #defined fixed/2.        % fixed(G, F).       [F cannot be relaxed in good transition G]
 #defined source/3.       % source(T, F, V).   [T is transition and F is feature; V=0 means F is FALSE or F=0, V=1 means F is TRUE or F>0]
 #defined change/3.       % change(T, F, C).   [T is transition and F is feature; C is "dec", "inc", or "eqv"]
-#defined yield/1.        % yield(Y).          [Y is a joint valuation for features that may result after a good transition]
+#defined yield/1.        % yield(Y).          [Y is a joint boolean valuation for features]
 #defined yield/2.        % yield(G, Y).       [Y is a joint valuation for features that may result after good transition G]
 #defined value/3.        % value(Y, F, V).    [Y is yield, F is feature; V=0 means F is FALSE or F=0, V=1 means F is TRUE or F>0]
 
@@ -20,7 +20,6 @@
 #defined state/2.        % state(T, S).       [S is state of type T]
 #defined value_s/3.      % value_s(S, F, V).  [S is state and F is feature:  V=0 means F is FALSE or F=0, V=1 means F is TRUE or F>0]
 
-#defined soft_constraints/0.
 #defined hard_constraints/0.
 
 % INFO: number of yields is 2**n where n is number of features
@@ -30,7 +29,7 @@
 % ==== Transitions
 
 transition(G) :- good(G).
-transition(B) :- good(B).
+transition(B) :- bad(B).
 transition(T) :- transition(R, T).
 
 
@@ -172,6 +171,5 @@ closed(G)         :- good(G), covered(Y) : possible(Y, G).
 #show active/1.
 #show consistent_r/2.
 #show compatible_r/2.
-#show soft_constraints/0.
 #show hard_constraints/0.
 
