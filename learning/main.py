@@ -78,6 +78,7 @@ if __name__ == "__main__":
     wrapper = parser.add_argument_group("Wrapper")
     wrapper.add_argument("--first_instance", type=int, default=None, help="First instance to solve (default: None)")
     wrapper.add_argument("--instance_selection", type=str, default="forward", choices=["forward", "forward+", "backward", "backward+", "random", "random+", "test"], help="Set strategy for selection of training instances (default: 'forward')")
+    wrapper.add_argument("--recompute_relevant_features", action=argparse.BooleanOptionalAction, default=False, help="Wether to recompute relevant features for each added edge (expensive) (default: False)")
     wrapper.add_argument("--randomized_sketch_test", type=int, default=None, help="Whether sketch is randomized rather than fully tested (decreases verification time substantially) (default: None)")
     wrapper.add_argument("--enumerate_solutions", action=argparse.BooleanOptionalAction, default=False, help="Enumerate solutions (default: False)")
 
@@ -171,6 +172,7 @@ if __name__ == "__main__":
         # Wrapper
         "first_instance": args.first_instance,
         "instance_selection": args.instance_selection,
+        "recompute_relevant_features": args.recompute_relevant_features,
         "randomized_sketch_test": args.randomized_sketch_test,
         "enumerate_solutions": args.enumerate_solutions,
         # REST

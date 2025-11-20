@@ -61,6 +61,7 @@ def sketch_learner(
     # Wrapper
     first_instance: int = None,
     instance_selection: str = None,
+    recompute_relevant_features: bool = None,
     randomized_sketch_test: bool = False,
     enumerate_solutions: bool = False,
     # REST
@@ -202,6 +203,7 @@ def sketch_learner(
         "folder_name_for_output": folder_name_for_output,
         "first_instance": first_instance,
         "instance_selection": instance_selection,
+        "recompute_relevant_features": recompute_relevant_features,
         "deadends": deadends,
         "max_non_covered_ext_states": 1,
         "randomized_sketch_test": randomized_sketch_test,
