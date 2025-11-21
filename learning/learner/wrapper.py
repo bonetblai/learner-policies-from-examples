@@ -318,7 +318,7 @@ class Wrapper(WrapperBase):
 
                 # Verify whether sketch solves all instances in benchmark
                 self._timers.resume("verification")
-                logging.info(colored(f"Verifying learned sketch of width={self._width} on ALL instances ({len(self._instance_datas_)} instance(s))...", "blue"))
+                logging.info(colored(f"Verifying learned sketch of width={self._width} on ALL instances ({len(self._instance_datas)} instance(s))...", "blue"))
                 unsolved_instances: List[Tuple[PDDLInstance, Any]] = self.get_unsolved_instances(iteration_data, self._instance_datas, sketch)
                 self._timers.stop("verification")
 
