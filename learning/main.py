@@ -72,7 +72,20 @@ if __name__ == "__main__":
     learner.add_argument("--rule_elimination", action=argparse.BooleanOptionalAction, default=False, help="Learning by rule elimination")
     learner.add_argument("--simplify_policy", action=argparse.BooleanOptionalAction, default=False, help="Whether to add don't care conditions and unknown effects to projected rules")
     learner.add_argument("--simplify_only_conditions", action=argparse.BooleanOptionalAction, default=False, help="If simplify policy, simplify only conditions")
+    learner.add_argument("--threshold_for_asp_based_simplification", type=int, default=8, help="Threshold limit for ASP-based simplification (default: 8)")
     learner.add_argument("--uniform_costs", action=argparse.BooleanOptionalAction, default=False, help="Optimize number of features rather than the sum of complexities")
+
+    # Arguments for solutions
+    solutions = parser.add_argument_group("Solutions")
+    solutions.add_argument("--max_solutions", type=int, default=1000, help="Maximum number of solutions for enumerator (default: 1000)")
+    solutions.add_argument("--max_features", type=int, default=15, help="Maximum number of features in a sketch (default: 15)")
+    solutions.add_argument("--cost_bound", type=int, default=100, help="Maximum aggregated cost for sketch (default: 100)")
+
+    # Arguments for backtracks
+    backtracks = parser.add_argument_group("Backtracks")
+    backtracks.add_argument("--max_backtracks", type=int, default=1000, help="Maximum number of backtracks (default: 1000)")
+    backtracks.add_argument("--max_restarts", type=int, default=10, help="Maximum number of restarts (default: 10)")
+    backtracks.add_argument("--backtrack_depth", type=int, default=0, help="Depth of backtracks (default: 0)")
 
     # Arguments for wrapper
     wrapper = parser.add_argument_group("Wrapper")
@@ -120,12 +133,8 @@ if __name__ == "__main__":
             args.role_complexity_limit = args.complexity_limit
 
     # Check for incompatible combination of options
-    if args.rule_elimination:
-        if not args.enumerate_solutions and args.width > 0:
-            raise RuntimeError("Width must be 0 for non-enumerative rule-elimination solver")
-    else:
-        if args.width > 0:
-            raise RuntimeError("Width must be 0 for feature-elimiation solver")
+    if not args.rule_elimination and args.width > 0:
+        raise RuntimeError("Width must be 0 for feature-elimiation solver")
 
     print(f"Call: python {' '.join(sys.argv)}")
 
@@ -168,7 +177,16 @@ if __name__ == "__main__":
         "rule_elimination": args.rule_elimination,
         "simplify_policy": args.simplify_policy or args.simplify_only_conditions,
         "simplify_only_conditions": args.simplify_only_conditions,
+        "threshold_for_asp_based_simplification": args.threshold_for_asp_based_simplification,
         "uniform_costs": args.uniform_costs,
+        # Solutions
+        "max_solutions": args.max_solutions,
+        "max_features": args.max_features,
+        "cost_bound": args.cost_bound,
+        # Backtracks
+        "max_backtracks": args.max_backtracks,
+        "max_restarts": args.max_restarts,
+        "backtrack_depth": args.backtrack_depth,
         # Wrapper
         "first_instance": args.first_instance,
         "instance_selection": args.instance_selection,

@@ -57,7 +57,16 @@ def sketch_learner(
     rule_elimination: bool = False,
     simplify_policy: bool = False,
     simplify_only_conditions: bool = False,
+    threshold_for_asp_based_simplification: int = None,
     uniform_costs: bool = False,
+    # Solution
+    max_solutions: int = None,
+    max_features: int = None,
+    cost_bound: int = None,
+    # Backtracks
+    max_backtracks: int = None,
+    max_restarts: int = None,
+    backtrack_depth: int = None,
     # Wrapper
     first_instance: int = None,
     instance_selection: str = None,
@@ -188,12 +197,28 @@ def sketch_learner(
 
     ####### LEARNER
     learner_options = {
+        # Solver
+        "recompute_relevant_features": recompute_relevant_features,
         "monotone_only_by_dec": monotone_only_by_dec,
         "rule_elimination": rule_elimination,
-        "simplify_policy": simplify_policy,
-        "simplify_only_conditions": simplify_only_conditions,
         "uniform_costs": uniform_costs,
         "width": width,
+        # Finalizer
+        "hard_constraints": True,
+        "solve_pending_requirements": True,
+        "simplify_policy": simplify_policy,
+        "simplify_only_conditions": simplify_only_conditions,
+        "threshold_for_asp_based_simplification": threshold_for_asp_based_simplification,
+        "dump_asp_program": dump_asp_program,
+        # Solutions
+        "max_solutions": max_solutions,
+        "max_features": max_features,
+        "cost_bound": cost_bound,
+        "uniform_costs": uniform_costs,
+        # Backtracks
+        "max_backtracks": max_backtracks,
+        "max_restarts": max_restarts,
+        "backtrack_depth": backtrack_depth,
     }
     learner: TerminationBasedLearnerReduced2 = TerminationBasedLearnerReduced2(benchmark, timers, **learner_options)
 
@@ -203,18 +228,11 @@ def sketch_learner(
         "folder_name_for_output": folder_name_for_output,
         "first_instance": first_instance,
         "instance_selection": instance_selection,
-        "recompute_relevant_features": recompute_relevant_features,
         "deadends": deadends,
+        # Sketch verifier
         "max_non_covered_ext_states": 1,
         "randomized_sketch_test": randomized_sketch_test,
         "test_goal_separating_features": False,
-        "solve_pending_requirements": True,
-        "hard_constraints": True,
-        "max_num_solutions": 1000,
-        "max_cost_bound": 100,
-        "max_f_idxs": 5,
-        "uniform_costs": uniform_costs,
-        "dump_asp_program": dump_asp_program,
     }
     WrapperClass = WrapperEnumerationV2 if enumerate_solutions else Wrapper
     wrapper: WrapperBase = WrapperClass(benchmark, feature_pool, learner, timers, **wrapper_options)

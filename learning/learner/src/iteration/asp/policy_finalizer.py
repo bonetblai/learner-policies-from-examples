@@ -863,7 +863,8 @@ class PolicyFinalizer:
         else:
             solution: intbitset = f_idxs
 
-        if len(solution) > kwargs.get("threshold_for_asp_based_simplification", 10):
+        threshold_for_asp_based_simplification: int = kwargs.get("threshold_for_asp_based_simplification") or 10
+        if len(solution) > threshold_for_asp_based_simplification:
             logging.info(f"Calculate decorations with NAIVE solver for {len(solution)} feature(s)")
             self._finalizer: _PolicyFinalizer = _NaiveFinalizer(**self._options)
         else:
