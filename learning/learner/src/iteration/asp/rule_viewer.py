@@ -135,6 +135,15 @@ class RuleViewer:
     def all_rules(self) -> intbitset:
         return intbitset(range(len(self._r_idx_to_affected_features)))
 
+    def ext_states_that_change_no_feature(self) -> List[Tuple[int, int]]:
+        features_changed_by_ext_state: Dict[Tuple[int, int], intbitset] = defaultdict(intbitset)
+        for (ext_state, change), f_idxs in self._features_by_change_on_ext_state.items():
+            if change != "eqv":
+                features_changed_by_ext_state[ext_state] |= f_idxs
+            elif ext_state not in features_changed_by_ext_state:
+                features_changed_by_ext_state[ext_state] = intbitset()
+        return [ext_state for ext_state, f_idxs in features_changed_by_ext_state.items() if len(f_idxs) == 0]
+
     def reset(self):
         self._initialize_watched_rules()
 
