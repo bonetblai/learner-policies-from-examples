@@ -136,4 +136,9 @@
 
     # Rule-based elimination
     "rule-elimination": {"group": ["standard"], "args": ["--rule_elimination", "--monotone_only_by_dec", "--simplify_policy"]},
+    "rule-elimination-w0": {"group": ["rule-elimination"], "args": ["--width 0"]},
+    "rule-elimination-w1": {"group": ["rule-elimination"], "args": ["--width 1"]},
+    "rule-elimination-enum": {"group": ["rule-elimination"], "args": ["--enumerate_solutions"]},
+    "rule-elimination-enum-w0": {"group": ["rule-elimination-enum"], "args": ["--width 0"]},
+    "rule-elimination-enum-w1": {"group": ["rule-elimination-enum"], "args": ["--width 1"]},
 }
