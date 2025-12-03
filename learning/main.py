@@ -4,7 +4,6 @@ import argparse, sys
 from pathlib import Path
 from typing import Dict, Optional, Any
 
-from learner.termination_based_learner_reduced import reduced_termination_based_learn_sketch_for_problem_class
 from learner.sketch_learner import sketch_learner
 
 
