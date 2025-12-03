@@ -301,10 +301,7 @@ class _NaiveFinalizer(_PolicyFinalizer):
                          non_sound_ext_states,
                          **kwargs)
 
-    def _calculate_decorations(self,
-                               solution: intbitset,
-                               r_idx_to_info: Dict[int, Tuple[int, intbitset]],
-                               **kwargs) -> Dict[str, Dict[int, Dict[int, intbitset]]]:
+    def _calculate_decorations(self, solution: intbitset, r_idx_to_info: Dict[int, Tuple[int, intbitset]]) -> Dict[str, Dict[int, Dict[int, intbitset]]]:
         # Necessary f_idxs: these are needed to guarantee good transitions are separated from bad transitions
         r_idx_to_necessary_f_idxs: Dict[int, List[intbitset]] = defaultdict(list)
         for annotation, requirement in self._annotated_requirements:
@@ -335,17 +332,17 @@ class _NaiveFinalizer(_PolicyFinalizer):
                     f_idxs_to_preserve.add(list(necessary_f_idxs)[0])
             f_idxs_to_remove -= f_idxs_to_preserve
             decorations["dont_care"][instance_idx][state_idx] = f_idxs_to_remove
-            if not kwargs.get("simplify_only_conditions", False):
+            if not self._options.get("simplify_only_conditions", False):
                 decorations["unknown"][instance_idx][state_idx] = f_idxs_to_remove
 
         return decorations
 
-    def solve(self, solution: List[int], r_idx_to_info: Dict[int, Tuple[int, intbitset]], **kwargs) -> Dict[str, Any]:
+    def solve(self, solution: List[int], r_idx_to_info: Dict[int, Tuple[int, intbitset]]) -> Dict[str, Any]:
         # If no policy simplification, return solution
-        if not kwargs.get("simplify_policy", False):
+        if not self._options.get("simplify_policy", False):
             decorations: Dict[str, Dict[int, Dict[int, intbitset]]] = None
         else:
-            decorations: Dict[str, Dict[int, Dict[int, intbitset]]] = self._calculate_decorations(intbitset(solution), r_idx_to_info, **kwargs)
+            decorations: Dict[str, Dict[int, Dict[int, intbitset]]] = self._calculate_decorations(intbitset(solution), r_idx_to_info)
 
         # Verify closure and bad edges
         conditions_for_goal: List[Dict[int, int]] = None
@@ -406,8 +403,8 @@ class _ASPFinalizer(_PolicyFinalizer):
         self._goal_separating_features: List[Any] = None
         self._facts: Dict[str, List[Any]] = None
 
-        self._hard_constraints: bool = kwargs.get("hard_constraints", False)
-        self._dump_asp_program: bool = kwargs.get("dump_asp_program", False)
+        self._hard_constraints: bool = self._options.get("hard_constraints", False)
+        self._dump_asp_program: bool = self._options.get("dump_asp_program", False)
 
     def _add_ext_pair(self, pair_type: str, ext_pair: Tuple[int, Tuple[int, int]], r_idx: int):
         assert pair_type in ["good", "bad"]
@@ -653,9 +650,9 @@ class _ASPFinalizer(_PolicyFinalizer):
             logging.warning(f"Declare ext_state={ext_state} as non-sound")
             self._add_ext_state_reachable(ext_state, force=True, soft=False)
 
-    def solve(self, solution: List[int], r_idx_to_info: Dict[int, Tuple[int, intbitset]], **kwargs) -> Dict[str, Any]:
+    def solve(self, solution: List[int], r_idx_to_info: Dict[int, Tuple[int, intbitset]]) -> Dict[str, Any]:
         # If no policy simplification, return solution
-        if not kwargs.get("simplify_policy", False):
+        if not self._options.get("simplify_policy", False):
             assert solution is not None, "CHECK CASE: Unexpected solution=None"
             result: Dict[str, Any] = {
                 "cost": sum([self._relevant_features[self._f_idx_to_feature_index[f_idx]][1].complexity - 1 for f_idx in solution]),
@@ -679,13 +676,7 @@ class _ASPFinalizer(_PolicyFinalizer):
         logging.info(f"{local_timer.get_elapsed_sec():.02f} second(s) for ASP solver; exit_code={exit_code}")
 
         # If no solution, return None
-        if symbols is None:
-            return {
-                "cost": None,
-                "f_idxs": None,
-                "decorations": None,
-                "conditions_for_goal": None,
-            }
+        if symbols is None: return None
 
         # Read symbols
         eqclass: intbitset = intbitset()
@@ -753,7 +744,7 @@ class _ASPFinalizer(_PolicyFinalizer):
         self._asp_solver: ASPSolver = self._get_new_solver()
         result: Dict[str, Any] = self.solve(None, None)
         logging.info(f"Repair: Result={result}")
-        if "non-sound" in reasons[0] and result.get("decorations") is not None: logging.info("SUCCESSFUL REPAIR")
+        if result is not None and "non-sound" in reasons[0] and result.get("decorations") is not None: logging.info("SUCCESSFUL REPAIR")
         return result
 
 
@@ -855,7 +846,7 @@ class PolicyFinalizer:
         return solution, solution - f_idxs
 
     # This is the intended "external access point" (API)
-    def __call__(self, f_idxs: intbitset, r_idx_to_info: Dict[int, Tuple[int, intbitset]], **kwargs) -> Dict[str, Any]:
+    def __call__(self, f_idxs: intbitset, r_idx_to_info: Dict[int, Tuple[int, intbitset]]) -> Dict[str, Any]:
         if self._options.get("solve_pending_requirements", False):
             solution, difference = self.solve_pending_requirements(f_idxs)
             if solution != f_idxs:
@@ -863,7 +854,7 @@ class PolicyFinalizer:
         else:
             solution: intbitset = f_idxs
 
-        threshold_for_asp_based_simplification: int = kwargs.get("threshold_for_asp_based_simplification") or 10
+        threshold_for_asp_based_simplification: int = self._options.get("threshold_for_asp_based_simplification") or 10
         if len(solution) > threshold_for_asp_based_simplification:
             logging.info(f"Calculate decorations with NAIVE solver for {len(solution)} feature(s)")
             self._finalizer: _PolicyFinalizer = _NaiveFinalizer(**self._options)
@@ -871,7 +862,7 @@ class PolicyFinalizer:
             logging.info(f"Calculate decorations with ASP solver for {len(solution)} feature(s)")
             self._finalizer: _PolicyFinalizer = _ASPFinalizer(**self._options)
 
-        result: Dict[str, Any] = self._finalizer.solve(sorted(solution), r_idx_to_info, **kwargs)
+        result: Dict[str, Any] = self._finalizer.solve(sorted(solution), r_idx_to_info)
         return result
 
     def repair(self, solution: Dict[str, Any], reason: Dict[str, Any]) -> Dict[str, Any]:
