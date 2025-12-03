@@ -81,9 +81,11 @@ consistent(G, T)    :- good(G), transition(T), source(T, F, V) : feature(F), con
 
 % Good transition G is COMPATIBLE with transition T if features affected by G change in T according to G (non-symmetric relation)
 compatible(G, T)    :- good(G), transition(T), compatible(G, T, F) : feature(F), effect(G, F, 1).
-compatible(G, T, F) :- good(G), transition(T), feature(F), effect(G, F, 1), change(G, F, C), change(T, F, C).
-compatible(G, T, F) :- good(G), transition(T), boolean(F), effect(G, F, 1), change(G, F, "inc"), change(T, F, "eqv"), source(T, F, 1).
-compatible(G, T, F) :- good(G), transition(T), boolean(F), effect(G, F, 1), change(G, F, "dec"), change(T, F, "eqv"), source(T, F, 0).
+compatible(G, T, F) :- good(G), transition(T), feature(F), change(G, F, C), change(T, F, C).
+compatible(G, T, F) :- good(G), transition(T), boolean(F), change(G, F, "inc"), change(T, F, "eqv"), source(T, F, 1).
+compatible(G, T, F) :- good(G), transition(T), boolean(F), change(G, F, "dec"), change(T, F, "eqv"), source(T, F, 0).
+compatible(G, T, F) :- good(G), transition(T), boolean(F), change(G, F, "eqv"), change(T, F, "inc"), source(G, F, 1).
+compatible(G, T, F) :- good(G), transition(T), boolean(F), change(G, F, "eqv"), change(T, F, "dec"), source(G, F, 0).
 
 consistent_r(G, R)  :- good(G), reachable(R), value_r(R, F, V) : feature(F), condition(G, F, 1), source(G, F, V).
 compatible_r(G, R)  :- good(G), reachable(R), transition(R, T), compatible(G, T).
