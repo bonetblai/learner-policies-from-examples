@@ -75,7 +75,7 @@ class RuleElimination:
         self._finalizer_options: Dict[str, Any] = {
             "simplify_policy": kwargs.get("simplify_policy"),
             "simplify_only_conditions": kwargs.get("simplify_only_conditions", False), # for naive simplification
-            "threshold_for_asp_based_simplification": kwargs.get("threshold_for_asp_based_simplification", 10),
+            "threshold_for_asp_based_simplification": kwargs.get("threshold_for_asp_based_simplification"),
             "solve_pending_requirements": kwargs.get("solve_pending_requirements", False),
             "hard_constraints": kwargs.get("hard_constraints", False),
             "dump_asp_program": kwargs.get("dump_asp_program", False),
@@ -254,6 +254,8 @@ class RuleElimination:
         return None
 
     def solve(self, **kwargs) -> Dict[str, Any]:
+        # This is the OLD recursive solver implemented above by _rec_solve_v2()
+
         # Reset rule viewer
         self._viewer.reset()
 
@@ -263,32 +265,23 @@ class RuleElimination:
         # Calculate features that "eliminate" all rules with greedy solver
         r_idx_to_info: Dict[int, Tuple[int, intbitset]] = dict()
         f_idxs = self._rec_solve_v2([], intbitset(), intbitset(), r_idx_to_info, **kwargs)
-        if f_idxs is None:
-            raise RuntimeError("No solution for given features")
+        if f_idxs is None: raise RuntimeError("No solution for given features")
 
         # Finalize policy
         result: Dict[str, Any] = self._finalizer(f_idxs, r_idx_to_info, **self._finalizer_options)
         result.update({"r_idxs": list(r_idx_to_info.keys())})
         return result
 
-    def solutions(self, other_ext_states: List[Tuple[int, int]], **kwargs) -> Generator[Dict[str, Any], None, None]:
-        # Control max_num_solutions (if any) here to account for skipped solutions
+    def one_solution(self, other_ext_states: List[Tuple[int, int]], **kwargs) -> Dict[str, Any]:
         options: Dict[str, Any] = dict(kwargs)
-        max_num_solutions: int = options.pop("max_num_solutions")
+        if "cost_bound" in options: options.pop("cost_bound")
+        generator: SolutionGenerator = SolutionGenerator(self._preprocessing_data, self._benchmark._state_factory, self._finalizer, **options)
+        solution: Dict[str, Any] = generator.one_solution(other_ext_states, cost_bound=None, **options)
+        return solution
 
-        generator: SolutionGenerator = SolutionGenerator(self._preprocessing_data, self._benchmark._state_factory, **options)
-        num_solutions: int = 0
-        for f_idxs, r_idx_to_info in generator(other_ext_states, **options):
-            result: Dict[str, Any] = self._finalizer(f_idxs, r_idx_to_info, **self._finalizer_options)
-            if result.get("decorations") is not None:
-                num_solutions += 1
-                result.update({"r_idxs": list(r_idx_to_info.keys())})
-                yield result
-            else:
-                logging.warning(f"SKIP SOLUTION: finalizer failed")
-            if max_num_solutions is not None and max_num_solutions <= num_solutions: break
-        logging.info(f"{num_solutions} solution(s) generated from max_num_solutions={max_num_solutions}")
-
+    def solutions(self, other_ext_states: List[Tuple[int, int]], **kwargs) -> Generator[Dict[str, Any], None, None]:
+        generator: SolutionGenerator = SolutionGenerator(self._preprocessing_data, self._benchmark._state_factory, self._finalizer, **kwargs)
+        yield from generator.solutions(other_ext_states, **kwargs)
 
     def repair(self, solution: Dict[str, Any], reasons: List[Dict[str, Any]]) -> Dict[str, Any]:
         return self._finalizer.repair(solution, reasons)
