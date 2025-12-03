@@ -19,6 +19,7 @@ from .statistics import PlainStatistics, Statistics, LearningStatistics
 from .asp import ClingoExitCode, EncodingType
 from .asp import TerminationBasedLearnerReduced
 from .asp.solution_generator import SolutionGenerator
+from.asp.exceptions import NoSolution, NoFeature, MaxRestarts
 
 #from .feature_valuations_utils import compute_per_state_feature_valuations, compute_feature_valuations_for_dlplan_state #, compute_feature_valuations_for_dlplan_states, compute_feature_valuations_dict_for_dlplan_states
 #from .tuple_graph_equivalence       import TupleGraphEquivalence
