@@ -17,6 +17,7 @@ from .src.preprocessing import InstanceData
 from .src.iteration import compute_feature_valuations_for_dlplan_state
 from .src.iteration import IterationData, Statistics, SketchReduced, D2sepDlplanPolicyFactory
 from .src.iteration import SolutionGenerator
+from .src.iteration import NoSolution, NoFeature, MaxRestarts
 
 
 class WrapperBase:
@@ -192,12 +193,32 @@ class Wrapper(WrapperBase):
 
         # Solve
         try:
-            solution: Dict[str, Any] = self._learner.solve(**self._options)
-            solution.pop("conditions_for_goal") # Don't perform goal-condition test during sketch testing as "non-goal" failures are not repaired
-        except RuntimeError as rt:
-            logging.info(str(rt))
+            # non_covered_ext_states is passed to RuleElimination's solve() in kwargs as the API for solve doesn't handle it.
+            non_covered_ext_states: List[Tuple[int, int]] = [(instance_idx, state_idx) for instance_idx, state_idxs in iteration_data.non_covered_vertices.items() for state_idx in state_idxs]
+            options: Dict[str, Any] = dict(self._options)
+            options["non_covered_ext_states"] = non_covered_ext_states
+            solution: Dict[str, Any] = self._learner.solve(**options)
+            solution.pop("conditions_for_goal") # Don't perform goal-condition test during sketch testing because "non-goal" failures are not repaired
+
+        except NoFeature as nf_error:
+            logging.warning(str(nf_error))
             self._timers.print(title="Finalizing due to RuntimeError exception...", logger=True)
-            raise
+            raise nf_error
+
+        except MaxRestarts as rs_error:
+            logging.warning(str(rs_error))
+            self._timers.print(title="Finalizing due to RuntimeError exception...", logger=True)
+            raise rs_error
+
+        except NoSolution as ns_error:
+            logging.warning(str(ns_error))
+            self._timers.print(title="Finalizing due to RuntimeError exception...", logger=True)
+            raise ns_error
+
+        except RuntimeError as rt_error:
+            logging.warning(str(rt_error))
+            self._timers.print(title="Finalizing due to RuntimeError exception...", logger=True)
+            raise rt_error
 
         return solution
 
@@ -214,6 +235,9 @@ class Wrapper(WrapperBase):
             f_idxs: List[int] = solution.get("f_idxs")
             rules_with_decorations: Set[Tuple[dlplan_policy.Rule, FrozenSet[int], FrozenSet[int]]] = solution.get("rules_with_decorations")
             conditions_for_goal: List[Dict[int, int]] = solution.get("conditions_for_goal")
+            if f_idxs is None:
+                # There is no solution for this training set
+                return None
 
             # Create sketch from solution
             dlplan_policy = D2sepDlplanPolicyFactory().make_dlplan_policy_from_rules_with_decorations(f_idxs, rules_with_decorations, self._policy_builder, iteration_data)
@@ -315,22 +339,27 @@ class Wrapper(WrapperBase):
 
                 # Solve current idxs
                 sketch: SketchReduced = self._inner_loop(iteration_data)
+                assert sketch is not None
 
-                # Verify whether sketch solves all instances in benchmark
-                self._timers.resume("verification")
-                logging.info(colored(f"Verifying learned sketch of width={self._width} on ALL instances ({len(self._instance_datas)} instance(s))...", "blue"))
-                unsolved_instances: List[Tuple[PDDLInstance, Any]] = self.get_unsolved_instances(iteration_data, self._instance_datas, sketch)
-                self._timers.stop("verification")
+                if sketch is not None:
+                    # Sketch solves current idxs. Verify whether sketch solves all instances in benchmark
+                    self._timers.resume("verification")
+                    logging.info(colored(f"Verifying learned sketch of width={self._width} on ALL instances ({len(self._instance_datas)} instance(s))...", "blue"))
+                    unsolved_instances: List[Tuple[PDDLInstance, Any]] = self.get_unsolved_instances(iteration_data, self._instance_datas, sketch)
+                    self._timers.stop("verification")
 
-                if len(unsolved_instances) == 0:
-                    logging.info(colored(f"Sketch SOLVES ALL {len(self._instance_datas)} instance(s)! [Bundle: {iteration_data.paths_with_idx}]", "blue"))
-                    return sketch, trace
+                    if len(unsolved_instances) == 0:
+                        logging.info(colored(f"Sketch SOLVES ALL {len(self._instance_datas)} instance(s)! [Bundle: {iteration_data.paths_with_idx}]", "blue"))
+                        return sketch, trace
 
-                # Sketch doesn't solve an instance different from the one used for learning
-                logging.info(f"Sketch doesn't solve an instance outside learning set {current_idxs}")
-                for instance_data, reason in unsolved_instances:
-                    logging.info(f"  {instance_data.instance_filepath()} (idx={instance_data.idx})")
-                    logging.info(f"  Reason: {reason}")
+                    # Sketch doesn't solve an instance different from the one used for learning
+                    logging.info(f"Sketch doesn't solve an instance outside learning set {current_idxs}")
+                    for instance_data, reason in unsolved_instances:
+                        logging.info(f"  {instance_data.instance_filepath()} (idx={instance_data.idx})")
+                        logging.info(f"  Reason: {reason}")
+                else:
+                    # There is no solution for current idxs
+                    unsolved_instances: List[Tuple[PDDLInstance, Any]] = [(instance, None) for instance in self._instance_datas]
 
                 previous_idxs += current_idxs
                 current_idxs: List[int] = self.advance_idxs(current_idxs, previous_idxs, [instance_data.idx for instance_data, _ in unsolved_instances])

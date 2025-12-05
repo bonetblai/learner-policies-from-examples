@@ -1,7 +1,6 @@
 import os
 import logging
 import random
-import heapq
 import numpy as np
 from intbitset import intbitset
 
@@ -18,6 +17,8 @@ from ...util import Timer
 
 from .rule_viewer import RuleViewer
 from .transitive_closure import TransitiveClosure
+from .policy_finalizer import PolicyFinalizer
+from .exceptions import NoFeature, MaxRestarts
 
 
 def _partition_r_idxs_with_f_idx(r_idxs: intbitset, f_idx: int, viewer: RuleViewer, boolean_projection: bool = True) -> Dict[Tuple[Tuple[int, int]], intbitset]:
@@ -28,9 +29,50 @@ def _partition_r_idxs_with_f_idx(r_idxs: intbitset, f_idx: int, viewer: RuleView
     return partition
 
 
+class Backtrack(RuntimeError):
+    # Parameters set by initialize()
+    _max_restarts: int = None
+    _max_backtracks: int = None
+    _backtrack_depth: int = None
+
+    # Class variables
+    _num_restarts: int = None
+    _num_backtracks: int = None
+    _seq: int = 0
+
+    @classmethod
+    def initialize(cls, max_restarts: int, max_backtracks: int, backtrack_depth: int):
+        cls._max_restarts: int = max_restarts
+        cls._max_backtracks: int = max_backtracks
+        cls._backtrack_depth: int = backtrack_depth
+        cls._num_backtracks: int = None
+        cls._num_restarts: int = 0
+
+    @classmethod
+    def reset(cls):
+        cls._num_backtracks: int = 0
+
+    def __init__(self, depth):
+        self._id: int = Backtrack._seq
+        self._depth: int = depth
+        Backtrack._seq += 1
+
+    def __str__(self):
+        return f"BT[id={self._id}, depth={self._depth}]"
+
+
 # A branch in an elimination tree. A node consists of several branches.
 class Branch:
-    def __init__(self, branch_id: str):
+    @classmethod
+    def make_root_branch(cls, r_idxs: intbitset, ex_paths: List[Tuple[Tuple[int, int]]], r_idxs_other: intbitset = None) -> "Branch":
+        branch: "Branch" = Branch(0, "")
+        branch._r_idxs: intbitset = r_idxs
+        branch._r_idxs_other: intbitset = r_idxs_other or intbitset()
+        branch._segments: List[Tuple[Tuple[int, int]]] = [path for path in ex_paths if len(path) > 2]
+        return branch
+
+    def __init__(self, branch_idx: int, branch_id: str):
+        self._idx: int = branch_idx
         self._id: str = branch_id
         self._f_idx: int = -1
         self._r_idxs: intbitset = None
@@ -49,7 +91,7 @@ class Branch:
         return f"Branch['{self._id}', f_idx={f_idx}, r_idxs={r_idxs}, change={r_idxs_change}, other={r_idxs_other}, other_change={r_idxs_other_change}, segments={self._segments}]"
 
     def _clone(self) -> "Branch":
-        clone: "Branch" = Branch(self._id)
+        clone: "Branch" = Branch(self._idx, self._id)
         clone._f_idx: int = self._f_idx
         clone._r_idxs: intbitset = self._r_idxs
         clone._r_idxs_change: intbitset = self._r_idxs_change
@@ -58,23 +100,51 @@ class Branch:
         clone._segments: List[Tuple[Tuple[int, int]]] = self._segments
         return clone
 
-    @classmethod
-    def make_root_branch(cls, r_idxs: intbitset, ex_paths: List[Tuple[Tuple[int, int]]], r_idxs_other: intbitset = None) -> "Branch":
-        branch: "Branch" = Branch("")
-        branch._r_idxs: intbitset = r_idxs
-        branch._r_idxs_other: intbitset = r_idxs_other or intbitset()
-        branch._segments: List[Tuple[Tuple[int, int]]] = [path for path in ex_paths if len(path) > 2]
-        return branch
 
 # A node in the search tree represets an elimination tree that is made of several branches.
 class Node:
     # Class members that must be initialized with class method before search starts
     _width: int = None
-    _max_f_idxs: int = None
+    _max_features: int = None
     _uniform_costs: bool = None
     _k_reachable: Dict[Tuple[int, int], intbitset] = None
     _ext_state_to_ext_edge: Dict[Tuple[int, int], Tuple[int, Tuple[int, int]]] = None
     _ext_state_to_feature_valuations: Dict[Tuple[int, int], np.ndarray] = None
+
+    @classmethod
+    def initialize(cls,
+                   width: int,
+                   max_features: int,
+                   uniform_costs: bool,
+                   k_reachable: Dict[Tuple[int, int], intbitset],
+                   ext_state_to_ext_edge: Dict[Tuple[int, int], Tuple[int, Tuple[int, int]]],
+                   ext_state_to_feature_valuations: Dict[Tuple[int, int], np.ndarray]):
+        cls._width: int = width
+        cls._max_features: int = max_features
+        cls._uniform_costs: bool = uniform_costs
+        cls._k_reachable: Dict[Tuple[int, int], intbitset] = k_reachable
+        cls._ext_state_to_ext_edge: Dict[Tuple[int, int], Tuple[int, Tuple[int, int]]] = ext_state_to_ext_edge
+        cls._ext_state_to_feature_valuations: Dict[Tuple[int, int], np.ndarray] = ext_state_to_feature_valuations
+
+    @classmethod
+    def make_root_node(cls, r_idxs: intbitset, ex_paths: List[Tuple[Tuple[int, int]]], r_idxs_other: intbitset = None) -> "Node":
+        root: "Node" = Node()
+        root._branch_id_to_branch_idx: Dict[str, int] = {"": 0}
+        root._branch_idx_to_branch: List[Branch] = [Branch.make_root_branch(r_idxs, ex_paths, r_idxs_other)]
+        root._OPEN: intbitset = intbitset([0])
+        root._TERMINAL: intbitset = intbitset([0]) if root.is_terminal_branch(0) else intbitset()
+        root._f_idxs: intbitset = intbitset()
+        root._cost: int = 0
+        root._score: Tuple[Union[int, float]] = None
+        return root
+
+    @classmethod
+    def _exploration(cls, initial_ext_states: Set[Tuple[int, int]]) -> Set[Tuple[int, int]]:
+        reachable: Set[Tuple[int, int]] = set()
+        for instance_idx, src_idx in initial_ext_states:
+            for state_idx in cls._k_reachable.get((instance_idx, src_idx)):
+                reachable.add((instance_idx, state_idx))
+        return reachable
 
     def __init__(self):
         self._branch_id_to_branch_idx: Dict[str, int] = None
@@ -83,6 +153,7 @@ class Node:
         self._TERMINAL: intbitset = None
         self._f_idxs: intbitset = None
         self._cost: int = 0
+        self._score: Tuple[Union[int, float]] = None
 
     def __repr__(self):
         branches: str = ", ".join([str((branch._id, branch._f_idx)) for branch in self._branch_idx_to_branch])
@@ -92,7 +163,7 @@ class Node:
         return f"Node[{{{branches}}}, OPEN={{{open_branches}}}, TERMINAL={{{terminal_branches}}}, cost={self._cost}, f_idxs={{{f_idxs}}}]"
 
     def __lt__(self, n: "Node"):
-        return self._cost < n._cost
+        return self._score < n._score
 
     def _clone(self) -> "Node":
         clone: "Node" = Node()
@@ -102,9 +173,10 @@ class Node:
         clone._TERMINAL: intbitset = intbitset(self._TERMINAL)
         clone._f_idxs: intbitset = intbitset(self._f_idxs)
         clone._cost: int = self._cost
+        clone._score: Tuple[Union[int, float]] = self._score
         return clone
 
-    def _make_successor(self, branch_idx: int, g_idx: int, viewer: RuleViewer) -> "Node":
+    def _make_successor(self, branch_idx: int, g_idx: int, viewer: RuleViewer, partition_g_idx: Dict[Tuple[Tuple[int, int]], intbitset] = None) -> "Node":
         # Assumption: rules changed by g_idxs associated with parent are "removed"
         assert len(viewer.r_idxs()) > 0
         assert branch_idx in self._OPEN
@@ -127,10 +199,12 @@ class Node:
 
         # Update set of chosen f_idxs and cost
         branch._f_idx: int = g_idx
+        g_idx_complexity: int = viewer.f_idx_to_feature(g_idx).complexity - 1 if not self._uniform_costs else 1
         branch._f_idx_str: str = f"{g_idx}.{viewer.f_idx_to_feature(g_idx)._dlplan_feature}"
+        g_idx_in_f_idxs: bool = g_idx in successor._f_idxs
         if g_idx not in successor._f_idxs:
             successor._f_idxs.add(g_idx)
-            successor._cost += viewer.f_idx_to_feature(g_idx).complexity - 1 if not self._uniform_costs else 1
+            successor._cost += g_idx_complexity
 
         # Calculate alive r_idxs
         r_idxs_alive: intbitset = viewer.r_idxs()
@@ -184,7 +258,7 @@ class Node:
             if len(r_idx_segments) > 0 or len(r_idxs_other) > 0:
                 new_branch_id: str = branch._id + str(key)
                 new_branch_idx: int = len(successor._branch_idx_to_branch)
-                new_branch: Branch = Branch(new_branch_id)
+                new_branch: Branch = Branch(new_branch_idx, new_branch_id)
                 successor._branch_id_to_branch_idx[new_branch_id] = new_branch_idx
                 successor._branch_idx_to_branch.append(new_branch)
 
@@ -210,9 +284,20 @@ class Node:
             print(f"  Branch='{branch._id}', g_idx={g_idx}")
             successor.dump("  ")
             assert successor.verify(2, True)
+
+        # Setup score that is used when ordering successors by max score
+        r_idxs_to_remove: intbitset = branch._r_idxs_change | branch._r_idxs_other_change
+        if partition_g_idx is None:
+            partition_g_idx: Dict[Tuple[Tuple[int, int]], intbitset] = _partition_r_idxs_with_f_idx(viewer.r_idxs(), g_idx, viewer)
+        block_sizes: List[int] = [len(block - r_idxs_to_remove) for _, block in partition_g_idx.items() if len(block - r_idxs_to_remove) > 0]
+        num_blocks: int = len(block_sizes)
+        std_block_sizes: float = -np.std(block_sizes) if num_blocks > 0 else 0
+        monotone_by_dec: int = 1 if viewer.is_monotone(g_idx, monotone_only_by_dec=True) else 0
+        successor._score: Tuple[Union[int, float]] = (monotone_by_dec, len(r_idxs_to_remove) / g_idx_complexity, 1 if g_idx_in_f_idxs else 0, num_blocks, std_block_sizes)
+
         return successor
 
-    def _remove_rules_for_branch(self, branch_idx: int, viewer: RuleViewer, restore_rules: bool) -> List[intbitset]:
+    def _remove_rules_for_branch(self, branch_idx: int, viewer: RuleViewer, restore_rules: bool, verbose: bool = False) -> List[intbitset]:
         branch: Branch = self.get_branch(branch_idx)
         list_removed_rules: List[intbitset] = []
         for i, vertex in enumerate(branch._id):
@@ -220,6 +305,7 @@ class Node:
             f_idx: int = self.get_branch(prefix_idx)._f_idx
             bvalue: int = int(vertex)
             assert f_idx >= 0 and bvalue in [0, 1]
+            if verbose: print(f"_remove_rules_for_branch: branch={branch}, i={i}, vertex={vertex}, prefix_id={branch._id[:i]}, prefix_idx={prefix_idx}, f_idx={f_idx}, bvalue={bvalue}")
 
             # Remove rules that change f_idx
             list_removed_rules.append(viewer.r_idxs_that_change(f_idx))
@@ -318,6 +404,8 @@ class Node:
             return False
         elif len(branch._r_idxs) == 0:
             return True
+        elif self._width == 0:
+            return False
         else:
             if verbose: print(f"Segments: {branch._segments}")
             for segment in branch._segments:
@@ -333,55 +421,67 @@ class Node:
             if verbose: print(f"Branch is TERMINAL")
             return True
 
-    def get_successors(self, branch_selection_heuristic: Callable["Node", int], viewer: RuleViewer, cost_bound: int, **kwargs) -> Tuple[List["Node"], int]:
+    def get_successors(self, branch_selection_heuristic: Callable["Node", Tuple[int, bool]], viewer: RuleViewer, cost_bound: int, **kwargs) -> Tuple[List["Node"], int, bool]:
         # Select branch to expand using provided heuristic
-        branch_idx: int = branch_selection_heuristic(self)
-        if branch_idx is None: return [], int(1e6)
+        branch_idx, random_tie_breaking_for_branch = branch_selection_heuristic(self)
+        if kwargs.get("verbose", False): print(f"branch_idx={branch_idx}, random_tie_breaking={random_tie_breaking_for_branch}")
+        if branch_idx is None: return [], int(1e6), random_tie_breaking_for_branch
         branch: Branch = self.get_branch(branch_idx)
         assert branch_idx in self._OPEN and branch._f_idx == -1
 
         # List of sets of removed rules
-        list_removed_rules: List[intbitset] = self._remove_rules_for_branch(branch_idx, viewer, restore_rules=False)
+        list_removed_rules: List[intbitset] = self._remove_rules_for_branch(branch_idx, viewer, restore_rules=False, verbose=kwargs.get("verbose", False))
+        if kwargs.get("verbose", False): print(f"list_removed_rules={list_removed_rules}")
 
         # Calculate monotone features for branch
         monotone_g_idxs: intbitset = viewer.monotone_features(kwargs.get("monotone_only_by_dec", False))
+        if kwargs.get("verbose", False): print(f"monotone_g_idxs={monotone_g_idxs}")
 
         # At the end, next_cost_bound must lower bound the cost of successors "pruned by cost bound"
         next_cost_bound: int = int(1e6)
         lower_bound: int = self._cost
         #lower_bound: int = self._cost + (len(self._OPEN - self._TERMINAL) - 1) * (1 if self._uniform_costs else viewer._min_complexity)
+        if kwargs.get("verbose", False):
+            print(f"next_cost_bound={next_cost_bound}, lower_bound={lower_bound}")
+            print(f"cost_bound={cost_bound}, max_features={self._max_features}, #f_idxs={len(self._f_idxs)}")
 
         # Generate successors for branch:
         # 1) one successor for each g_idx that is monotone for the set of non-removed rules at branch and that is changed by at least one such rule
         # 2) prune g_idxs that result in the same "split" (which is calculated with plain valuations and not boolean valuations)
         # 3) Additionally, if branch is terminal, the same node appears as successor but with the branch moved to non_terminals
 
-        splits: Set[FrozenSet] = set()
         successors: List["Node"] = []
         for cost, g_idx in sorted([(viewer.f_idx_to_feature(g_idx).complexity - 1, g_idx) for g_idx in monotone_g_idxs]):
             revised_cost: int = 1 if self._uniform_costs else cost
-            if g_idx in self._f_idxs or ((cost_bound is None or lower_bound + revised_cost <= cost_bound) and (self._max_f_idxs is None or len(self._f_idxs) < self._max_f_idxs)):
+            if g_idx in self._f_idxs or ((cost_bound is None or lower_bound + revised_cost <= cost_bound) and (self._max_features is None or len(self._f_idxs) < self._max_features)):
                 r_idxs_that_change_g_idx: intbitset = viewer.r_idxs_that_change(g_idx)
-                if len(branch._r_idxs & r_idxs_that_change_g_idx) > 0:
-                    partition: Dict[Tuple[Tuple[int, int]], intbitset] = _partition_r_idxs_with_f_idx(viewer.r_idxs() - r_idxs_that_change_g_idx, g_idx, viewer, boolean_projection=False)
-                    split: FrozenSet = frozenset(partition.values())
-                    if split not in splits:
-                        heapq.heappush(successors, self._make_successor(branch_idx, g_idx, viewer))
-                        splits.add(split)
-            elif g_idx not in self._f_idxs and cost_bound is not None and (self._max_f_idxs is None or len(self._f_idxs) < self._max_f_idxs):
+                if kwargs.get("verbose", False):
+                    print(f"  Case 1: cost={cost}, g_idx={g_idx}, r_idxs={sorted(viewer.r_idxs())}, r_idxs_that_change_g_idx={sorted(r_idxs_that_change_g_idx)}")
+                if len((branch._r_idxs | branch._r_idxs_other) & r_idxs_that_change_g_idx) > 0:
+                    successors.append(self._make_successor(branch_idx, g_idx, viewer))
+            elif g_idx not in self._f_idxs and cost_bound is not None and (self._max_features is None or len(self._f_idxs) < self._max_features):
+                if kwargs.get("verbose", False): print(f"  Case 2: cost={cost}, g_idx={g_idx}")
                 # Branch isn't assigned to g_idx because it violates cost bound
                 next_cost_bound = min(next_cost_bound, lower_bound + revised_cost)
+            else:
+                if kwargs.get("verbose", False): print(f"  Case 3: cost={cost}, g_idx={g_idx}")
+        if kwargs.get("verbose", False): print(f"Successors: {successors}")
 
         # If branch is terminal, create successor where branch is just removed from OPEN
+        if kwargs.get("verbose", False): print(f"Branch {branch_idx} is TERMINAL")
         if branch_idx in self._TERMINAL:
-            heapq.heappush(successors, self._make_successor(branch_idx, None, viewer))
+            if kwargs.get("verbose", False): print(f"Branch {branch_idx} is TERMINAL")
+            successors.append(self._make_successor(branch_idx, None, viewer))
 
         # Restore rules following bottom-up branch traversal
         for removed_rules in reversed(list_removed_rules):
             for r_idx in removed_rules: viewer.restore_rule(r_idx)
 
-        assert next_cost_bound > cost_bound
-        return [heapq.heappop(successors) for _ in range(len(successors))], next_cost_bound
+        assert cost_bound is None or next_cost_bound > cost_bound, (next_cost_bound, cost_bound)
+        random.shuffle(successors)
+        successors: List["Node"] = sorted(successors, reverse=True)
+        random_tie_breaking_for_successors: bool = len([successor for successor in successors if successor._score == successors[0]._score]) > 1
+        return successors, next_cost_bound, random_tie_breaking_for_branch | random_tie_breaking_for_successors
 
     def get_r_idx_to_info(self, viewer: RuleViewer) -> Dict[int, Tuple[int, intbitset]]:
         r_idxs: intbitset = viewer.r_idxs()
@@ -400,56 +500,73 @@ class Node:
                 num_standard_rules += len(branch._r_idxs_change)
                 num_other_rules += len(branch._r_idxs_other_change)
         assert len(self.get_branch(0)._r_idxs_other) == num_other_rules, (len(self.get_branch(0)._r_idxs_other), num_other_rules)
-        logging.warning(f"**** NUM_RULES: #standard={num_standard_rules}, #other={num_other_rules}")
 
         return r_idx_to_info
 
-    @classmethod
-    def initialize(cls,
-                   width: int,
-                   max_f_idxs: int,
-                   uniform_costs: bool,
-                   k_reachable: Dict[Tuple[int, int], intbitset],
-                   ext_state_to_ext_edge: Dict[Tuple[int, int], Tuple[int, Tuple[int, int]]],
-                   ext_state_to_feature_valuations: Dict[Tuple[int, int], np.ndarray]):
-        cls._width: int = width
-        cls._max_f_idxs: int = max_f_idxs
-        cls._uniform_costs: bool = uniform_costs
-        cls._k_reachable: Dict[Tuple[int, int], intbitset] = k_reachable
-        cls._ext_state_to_ext_edge: Dict[Tuple[int, int], Tuple[int, Tuple[int, int]]] = ext_state_to_ext_edge
-        cls._ext_state_to_feature_valuations: Dict[Tuple[int, int], np.ndarray] = ext_state_to_feature_valuations
+    # Branch selection heuristic: select a tip with greatest number of r_idxs
+    def bsh_tip_with_most_r_idxs(self) -> Tuple[int, bool]:
+        assert len(self._OPEN) > 0
+        branches: List[Branch] = [self.get_branch(branch_idx) for branch_idx in self._OPEN]
+        branches_with_score: List[Tuple[int, Tuple[int]]] = [(branch._idx, (len(branch._r_idxs), len(branch._r_idxs_other))) for branch in branches]
+        if len(branches_with_score) > 0:
+            random.shuffle(branches_with_score)
+            sorted_branches_with_score: List[Tuple[int, Tuple[int]]] = sorted(branches_with_score, key=lambda p: p[1], reverse=True)
+            random_tie_breaking_for_branch: bool = len([branch for branch, score in sorted_branches_with_score if score == sorted_branches_with_score[0][1]]) > 1
+            return sorted_branches_with_score[0][0], random_tie_breaking_for_branch
+        else:
+            return None, False
 
-    @classmethod
-    def make_root_node(cls, r_idxs: intbitset, ex_paths: List[Tuple[Tuple[int, int]]], r_idxs_other: intbitset = None) -> "Node":
-        root: "Node" = Node()
-        root._branch_id_to_branch_idx: Dict[str, int] = {"": 0}
-        root._branch_idx_to_branch: List[Branch] = [Branch.make_root_branch(r_idxs, ex_paths, r_idxs_other)]
-        root._OPEN: intbitset = intbitset([0])
-        root._TERMINAL: intbitset = intbitset([0]) if root.is_terminal_branch(0) else intbitset()
-        root._f_idxs: intbitset = intbitset()
-        root._cost: int = 0
-        return root
+    # Branch selection heuristic: select a shallowest tip
+    def bsh_shallowest_tip(self) -> Tuple[int, bool]:
+        assert len(self._OPEN) > 0
+        branches: List[Branch] = [self.get_branch(branch_idx) for branch_idx in self._OPEN]
+        branches_with_score: List[Tuple[int, int]] = [(branch._idx, len(branch._id)) for branch in branches]
+        if len(branches_with_score) > 0:
+            random.shuffle(branches_with_score)
+            sorted_branches_with_score: List[Tuple[int, int]] = sorted(branches_with_score, key=lambda p: p[1], reverse=False)
+            random_tie_breaking_for_branch: bool = len([branch for branch, score in sorted_branches_with_score if score == sorted_branches_with_score[0][1]]) > 1
+            return sorted_branches_with_score[0][0], random_tie_breaking_for_branch
+        else:
+            return None, False
 
-    @classmethod
-    def _exploration(cls, initial_ext_states: Set[Tuple[int, int]]) -> Set[Tuple[int, int]]:
-        reachable: Set[Tuple[int, int]] = set()
-        for instance_idx, src_idx in initial_ext_states:
-            for state_idx in cls._k_reachable.get((instance_idx, src_idx)):
-                reachable.add((instance_idx, state_idx))
-        return reachable
+    # Branch selection heuristic: select a leftmost tip
+    def bsh_leftmost_tip(self) -> Tuple[int, bool]:
+        assert len(self._OPEN) > 0
+        branches: List[Branch] = [self.get_branch(branch_idx) for branch_idx in self._OPEN]
+        branches_with_score: List[Tuple[int, str]] = [(branch._idx, branch._id) for branch in branches]
+        if len(branches_with_score) > 0:
+            random.shuffle(branches_with_score)
+            sorted_branches_with_score: List[Tuple[int, int]] = sorted(branches_with_score, key=lambda p: p[1])
+            random_tie_breaking_for_branch: bool = len([branch for branch, score in sorted_branches_with_score if score == sorted_branches_with_score[0][1]]) > 1
+            return sorted_branches_with_score[0][0], random_tie_breaking_for_branch
+        else:
+            return None, False
 
 
 class SolutionGenerator:
-    # Statistics
+    # Class variables for statistics
     _layers: List[List[int]] = []
     _num_generated: List[int] = []
     _num_expanded: List[int] = []
     _num_terminals: List[int] = []
     _num_solutions: List[int] = []
 
-    def __init__(self, preprocessing_data: Dict[str, Any], state_factory: StateFactory, **kwargs):
+    @classmethod
+    def get_node_statistics(cls) -> Dict[str, Any]:
+        return {
+            "searches": len(cls._layers),
+            "num_layers": [len(layer) for layer in cls._layers],
+            "layers": list(cls._layers),
+            "generated": list(cls._num_generated),
+            "expanded": list(cls._num_expanded),
+            "terminals": list(cls._num_terminals),
+            "solutions": list(cls._num_solutions),
+        }
+
+    def __init__(self, preprocessing_data: Dict[str, Any], state_factory: StateFactory, finalizer: PolicyFinalizer, **kwargs):
         self._preprocessing_data: Dict[str, Any] = preprocessing_data
         self._state_factory: StateFactory = state_factory
+        self._finalizer: PolicyFinalizer = finalizer
         assert self._preprocessing_data is not None
 
         self._requirements_for_good_transitions: Dict[Tuple[int, int], intbitset] = self._preprocessing_data.get("requirements_for_good_transitions")
@@ -489,7 +606,7 @@ class SolutionGenerator:
         logging.info(f"{sum([len(reachable) for reachable in self._k_reachable.values()]) if self._width > 0 else 0} reachability pair(s) calculated in {local_timer.get_elapsed_sec():0.2f} second(s)")
 
         # Other options
-        self._max_f_idxs: int = kwargs.get("max_f_idxs", int(1e6))
+        self._max_features: int = kwargs.get("max_features", int(1e6))
         self._uniform_costs: bool = kwargs.get("uniform_costs", False)
 
     def _calculate_reachable_pairs(self) -> Dict[Tuple[int, int], intbitset]:
@@ -512,32 +629,33 @@ class SolutionGenerator:
         return k_reachable
 
     def _node_generator(self, branch_selection_heuristic: Callable[Node, int], r_idxs_other: intbitset, **kwargs) -> Generator[Node, None, None]:
-        def _rec_generator(depth: int, node: Node, cost_bound: int, prune_solutions_with_cost_bound: bool = True) -> Generator[Node, None, int]:
+        def rec_generator(depth: int, node: Node, cost_bound: int, prune_solutions_with_cost_bound: bool = True) -> Generator[Node, None, int]:
             assert node._cost <= cost_bound
-            self._num_generated[-1] += 1
+            SolutionGenerator._num_generated[-1] += 1
             next_cost_bound: int = int(1e6)
             if node.is_terminal():
-                self._num_terminals[-1] += 1
+                SolutionGenerator._num_terminals[-1] += 1
                 if not prune_solutions_with_cost_bound or node._cost == cost_bound:
-                    self._num_solutions[-1] += 1
+                    SolutionGenerator._num_solutions[-1] += 1
                     node.dump("YIELD ")
                     yield node
             else:
-                self._num_expanded[-1] += 1
-                successors, next_cost_bound = node.get_successors(branch_selection_heuristic, self._viewer, cost_bound, **kwargs)
+                SolutionGenerator._num_expanded[-1] += 1
+                successors, next_cost_bound, _ = node.get_successors(branch_selection_heuristic, self._viewer, cost_bound, **kwargs)
                 for succ in successors:
-                    ncb: int = yield from _rec_generator(1 + depth, succ, cost_bound, prune_solutions_with_cost_bound)
+                    ncb: int = yield from rec_generator(1 + depth, succ, cost_bound, prune_solutions_with_cost_bound)
                     next_cost_bound = min(next_cost_bound, ncb)
             return next_cost_bound
 
-        max_cost_bound: int = kwargs.get("max_cost_bound", 100)
-        Node.initialize(self._width, self._max_f_idxs, self._uniform_costs, self._k_reachable, self._ext_state_to_ext_edge, self._ext_state_to_feature_valuations)
+        max_cost_bound: int = kwargs.get("cost_bound", 100)
+        Node.initialize(self._width, self._max_features, self._uniform_costs, self._k_reachable, self._ext_state_to_ext_edge, self._ext_state_to_feature_valuations)
 
-        self._layers.append([])
-        self._num_generated.append(0)
-        self._num_expanded.append(0)
-        self._num_terminals.append(0)
-        self._num_solutions.append(0)
+        SolutionGenerator._layers.append([])
+        SolutionGenerator._num_generated.append(0)
+        SolutionGenerator._num_expanded.append(0)
+        SolutionGenerator._num_terminals.append(0)
+        SolutionGenerator._num_solutions.append(0)
+
         last_num_generated: int = 0
         last_num_expanded: int = 0
         last_num_terminals: int = 0
@@ -549,39 +667,103 @@ class SolutionGenerator:
         cost_bound: int = 0
         while cost_bound <= max_cost_bound:
             self._layers[-1].append(cost_bound)
-            next_cost_bound: int = yield from _rec_generator(0, root_node, cost_bound)
-            logging.info(f"Cost-layer: cost={cost_bound}, #generated={self._num_generated[-1] - last_num_generated}, #expanded={self._num_expanded[-1] - last_num_expanded}, #terminals={self._num_terminals[-1] - last_num_terminals}, #solutions={self._num_solutions[-1] - last_num_solutions}")
-            last_num_generated: int = self._num_generated[-1]
-            last_num_expanded: int = self._num_expanded[-1]
-            last_num_terminals: int = self._num_terminals[-1]
-            last_num_solutions: int = self._num_solutions[-1]
+            next_cost_bound: int = yield from rec_generator(0, root_node, cost_bound)
+            logging.info(f"Cost-layer: cost={cost_bound}, #generated={SolutionGenerator._num_generated[-1] - last_num_generated}, #expanded={SolutionGenerator._num_expanded[-1] - last_num_expanded}, #terminals={SolutionGenerator._num_terminals[-1] - last_num_terminals}, #solutions={SolutionGenerator._num_solutions[-1] - last_num_solutions}")
+            last_num_generated: int = SolutionGenerator._num_generated[-1]
+            last_num_expanded: int = SolutionGenerator._num_expanded[-1]
+            last_num_terminals: int = SolutionGenerator._num_terminals[-1]
+            last_num_solutions: int = SolutionGenerator._num_solutions[-1]
             cost_bound: int = next_cost_bound
 
-    def _solutions(self, other_ext_states: List[Tuple[int, int]], **kwargs) -> Generator[Any, None, None]:
-        # Branch selection heuristic: select a tip with greatest number of r_idxs
-        def _branch_selection_heuristic_1(node: Node) -> int:
-            assert len(node._OPEN) > 0
-            branches_with_score: List[Tuple[int, Tuple[int]]] = [(branch_idx, (len(node.get_branch(branch_idx)._r_idxs), len(node.get_branch(branch_idx)._r_idxs_other))) for branch_idx in node._OPEN]
-            branches_with_score: List[Tuple[int, Tuple[int]]] = [(branch_idx, score) for branch_idx, score in branches_with_score if score[0] > 0]
-            if len(branches_with_score) > 0:
-                sorted_branches_with_score: List[Tuple[int, Tuple[int]]] = sorted(branches_with_score, key=lambda p: p[1], reverse=True)
-                return sorted_branches_with_score[0][0]
+    def _find_solution(self, branch_selection_heuristic: Callable[Node, int], r_idxs_other: intbitset, cost_bound: int, **kwargs) -> Dict[str, Any]:
+        def search(depth: int, node: Node, cost_bound: int) -> Dict[str, Any]:
+            nonlocal meaningful_restart
+            #node.dump(depth * '  ' + '==> ')
+            assert cost_bound is None or node._cost <= cost_bound
+            SolutionGenerator._num_generated[-1] += 1
+            if node.is_terminal():
+                SolutionGenerator._num_terminals[-1] += 1
+                r_idx_to_info: Dict[int, Tuple[int, intbitset]] = node.get_r_idx_to_info(self._viewer)
+                result: Dict[str, Any] = self._finalizer(node._f_idxs, r_idx_to_info)
+                if result is not None:
+                    result.update({"node": node, "r_idx_to_info": r_idx_to_info, "r_idxs": list(r_idx_to_info.keys())})
+                    SolutionGenerator._num_solutions[-1] += 1
+                    return result
+                else:
+                    bt: Backtrack = Backtrack(Backtrack._backtrack_depth)
+                    print(f"{depth * '  '}<== BACKTRACK (TERMINAL) @ {depth} ({bt})")
+                    raise bt
             else:
-                return None
+                SolutionGenerator._num_expanded[-1] += 1
+                successors, _, random_tie_breaking = node.get_successors(branch_selection_heuristic, self._viewer, cost_bound, **kwargs)
+                meaningful_restart |= random_tie_breaking
+                for succ in successors:
+                    try:
+                        solution: Dict[str, Any] = search(1 + depth, succ, cost_bound)
+                    except Backtrack as bt:
+                        if bt._depth < 0:
+                            # This is a restart request, float it
+                            #print(f"{depth * '  '}<== RESTART @ {depth} ({bt}, #f_idxs={len(node._f_idxs)}, max_features={Node._max_features})")
+                            raise bt
+                        elif bt._depth == 0:
+                            # Backtrack level reached, if still within quota of bracktracks, continue, else request restart
+                            #print(f"{depth * '  '}HANDLING {bt} @ {depth}")
+                            Backtrack._num_backtracks += 1
+                            if Backtrack._max_backtracks and Backtrack._max_backtracks <= Backtrack._num_backtracks:
+                                #logging.warning(f"{depth * '  '}Max backtracks reached: #backtracks={Backtrack._num_backtracks}, #f_idxs={len(node._f_idxs)},  max_features={Node._max_features})")
+                                #print(f"{depth * '  '}Max backtracks reached @ {depth} (#backtracks={Backtrack._num_backtracks})")
+                                restart: Backtrack = Backtrack(-1)
+                                #print(f"{depth * '  '}REQUEST restart {restart}")
+                                raise restart
+                            continue
+                        else:
+                            # Regular backtrack hasn't reached handling level, float it
+                            bt._depth -= 1
+                            #print(f"{depth * '  '}<== BACKTRACK (id={bt._id}, depth={bt._depth}, #f_idxs={len(node._f_idxs)}, max_features={Node._max_features})")
+                            raise bt
+                    assert solution is not None
+                    return solution
 
-        # Branch selection heuristic: select a shallowest tip
-        def _branch_selection_heuristic_2(node: Node) -> int:
-            assert len(node._OPEN) > 0
-            branches_with_score: List[Tuple[int, int]] = [(branch_idx, len(node.get_branch(branch_idx)._id)) for branch_idx in node._OPEN]
-            branches_with_score: List[Tuple[int, int]] = [(branch_idx, score) for branch_idx, score in branches_with_score if len(node.get_branch(branch_idx)._r_idxs) > 0]
-            if len(branches_with_score) > 0:
-                sorted_branches_with_score: List[Tuple[int, int]] = sorted(branches_with_score, key=lambda p: p[1], reverse=False)
-                return sorted_branches_with_score[0][0]
-            else:
-                return None
+                # No solution found below this node, backtrack
+                bt: Backtrack = Backtrack(Backtrack._backtrack_depth)
+                #print(f"{depth * '  '}<== BACKTRACK @ {depth} ({bt}, #succ={len(successors)}, #f_idxs={len(node._f_idxs)}, max_features={Node._max_features})")
+                raise bt
 
+        Backtrack.initialize(kwargs.get("max_restarts", 1), kwargs.get("max_backtracks"), kwargs.get("backtrack_depth", 0))
+        Node.initialize(self._width, self._max_features, self._uniform_costs, self._k_reachable, self._ext_state_to_ext_edge, self._ext_state_to_feature_valuations)
+        meaningful_restart: bool = True
+
+        SolutionGenerator._layers.append([])
+        SolutionGenerator._num_generated.append(0)
+        SolutionGenerator._num_expanded.append(0)
+        SolutionGenerator._num_terminals.append(0)
+        SolutionGenerator._num_solutions.append(0)
+
+        root_node: Node = Node.make_root_node(self._viewer.all_rules() - r_idxs_other, self._ex_paths, r_idxs_other)
+        assert root_node.verify()
+
+        # Perform up to max_restarts searches
+        assert Backtrack._max_restarts > 0
+        while meaningful_restart and Backtrack._num_restarts <= Backtrack._max_restarts:
+            meaningful_restart: bool = False
+            Backtrack.reset()
+            logging.info(f"Searching for solution with cost_bound={cost_bound} [restart_idx={Backtrack._num_restarts}] ...")
+            try:
+                solution: Dict[str, Any] = search(0, root_node, cost_bound)
+            except Backtrack as bt:
+                Backtrack._num_restarts += 1
+                print(f"TOP-LEVEL: bt={bt}, meaningful_restart={meaningful_restart}")
+                continue
+            assert solution is not None
+            solution.get("node").dump("FOUND ")
+            return solution
+        logging.warning(f"NO SOLUTION FOUND AFTER {Backtrack._max_restarts} RESTART(s)")
+        raise MaxRestarts(Backtrack._max_restarts, cost_bound)
+
+    def solutions(self, other_ext_states: List[Tuple[int, int]], **kwargs) -> Generator[Dict[str, Any], None, None]:
         # Reset rule viewer
         self._viewer.reset()
+        assert False, "ADAPT TO FINALIZER MOVED INTO GENERATOR"
 
         # Other r_idxs
         for ext_state in other_ext_states:
@@ -591,25 +773,36 @@ class SolutionGenerator:
         r_idxs_other: intbitset = intbitset([self._viewer.get_r_idx(ext_state) for ext_state in other_ext_states])
 
         # Generate solutions in increasing order of cost
-        max_num_solutions: int = kwargs.get("max_num_solutions")
-        for i, node in enumerate(self._node_generator(_branch_selection_heuristic_1, r_idxs_other, **kwargs)):
+        max_solutions: int = kwargs.get("max_solutions")
+        branch_selection_heuristic: Callable[Node, Tuple[int, bool]] = lambda node: node.bsh_tip_with_most_r_idxs()
+        for i, node in enumerate(self._node_generator(branch_selection_heuristic, r_idxs_other, **kwargs)):
             logging.info(f"Yield {1 + i} {node}")
             yield node._f_idxs, node.get_r_idx_to_info(self._viewer)
-            if max_num_solutions is not None and max_num_solutions <= 1 + i: break
-        logging.info(f"Nodes: #expanded={self._num_expanded}, #generated={self._num_generated}")
+            if max_solutions and max_solutions <= 1 + i: break
+        logging.info(f"No more solutions: {i} solution(s) using max_solutions={max_solutions}; #expanded={self._num_expanded}, #generated={self._num_generated}")
 
-    def __call__(self, other_ext_states: List[Tuple[int, int]], **kwargs) -> Generator[Any, None, None]:
-        yield from self._solutions(other_ext_states, **kwargs)
+    def one_solution(self, other_ext_states: List[Tuple[int, int]], cost_bound: int = None, **kwargs) -> Dict[str, Any]:
+        # Reset rule viewer
+        self._viewer.reset()
 
-    @classmethod
-    def get_node_statistics(cls) -> Dict[str, Any]:
-        return {
-            "searches": len(cls._layers),
-            "num_layers": [len(layer) for layer in cls._layers],
-            "layers": list(cls._layers),
-            "generated": list(cls._num_generated),
-            "expanded": list(cls._num_expanded),
-            "terminals": list(cls._num_terminals),
-            "solutions": list(cls._num_solutions),
-        }
+        # Check there is solution
+        ext_states_that_change_no_feature: List[Tuple[int, int]] = self._viewer.ext_states_that_change_no_feature()
+        if len(ext_states_that_change_no_feature) > 0:
+            logging.warning(f"The following ext_states (transitions) change no feature: {sorted(ext_states_that_change_no_feature)}")
+            raise NoFeature([self._ext_state_to_ext_edge.get(ext_state) for ext_state in ext_edges_that_change_no_feature])
+
+        # Other r_idxs
+        for ext_state in other_ext_states:
+            if self._viewer.get_r_idx(ext_state) is None:
+                print(f"NON_EXISTENT: {ext_state}")
+        assert all([self._viewer.get_r_idx(ext_state) is not None for ext_state in other_ext_states])
+        r_idxs_other: intbitset = intbitset([self._viewer.get_r_idx(ext_state) for ext_state in other_ext_states])
+
+        # Search for one solution
+        if kwargs.get("branch_selection_heuristic", "leftmost") == "leftmost":
+            branch_selection_heuristic: Callable[Node, Tuple[int, bool]] = lambda node: node.bsh_leftmost_tip()
+        else:
+            branch_selection_heuristic: Callable[Node, Tuple[int, bool]] = lambda node: node.bsh_shallowest_tip()
+        solution: Dict[str, Any] = self._find_solution(branch_selection_heuristic, r_idxs_other, cost_bound, **kwargs)
+        return solution
 
